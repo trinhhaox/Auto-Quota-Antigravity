@@ -1,0 +1,87 @@
+{
+    "name": "ag-manager",
+    "displayName": "AG Manager",
+    "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
+    "version": "1.1.0",
+    "publisher": "anonymous",
+    "author": {
+        "name": "Anonymous",
+        "email": ""
+    },
+    "icon": "logo/logo.png",
+    "engines": {
+        "vscode": "^1.96.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "main": "./dist/extension.js",
+    "contributes": {
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "sqm-explorer",
+                    "title": "AG Manager",
+                    "icon": "$(dashboard)"
+                }
+            ]
+        },
+        "views": {
+            "sqm-explorer": [
+                {
+                    "type": "webview",
+                    "id": "sqm.sidebar",
+                    "name": "Dashboard"
+                }
+            ]
+        },
+        "commands": [
+            {
+                "command": "sqm.refresh",
+                "title": "AG Manager: Refresh Quotas",
+                "icon": "$(refresh)"
+            }
+        ],
+        "configuration": {
+            "title": "AG Manager",
+            "properties": {
+                "ag-manager.automation.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Bật/tắt hệ thống tự động hóa."
+                },
+                "ag-manager.automation.rules": {
+                    "type": "array",
+                    "default": [
+                        "Run",
+                        "Allow",
+                        "Accept",
+                        "Always Allow",
+                        "Keep Waiting",
+                        "Retry",
+                        "Continue",
+                        "Allow Once",
+                        "Accept all"
+                    ],
+                    "description": "Các quy tắc tự động hóa được kích hoạt."
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run build",
+        "build": "node ./esbuild.js",
+        "watch": "node ./esbuild.js --watch",
+        "package": "vsce package"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.96.0",
+        "@types/node": "20.x",
+        "typescript": "^5.7.2",
+        "esbuild": "^0.24.0",
+        "@vscode/vsce": "^3.2.1"
+    }
+}
