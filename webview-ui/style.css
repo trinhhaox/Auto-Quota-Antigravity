@@ -303,3 +303,72 @@ button#refresh-btn:hover {
     font-weight: 600;
     color: #9CA3AF;
 }
+
+/* Analytics Dashboard */
+.analytics-container {
+    margin-top: 15px;
+    padding: 10px 0;
+}
+
+.analytics-grid {
+    display: flex;
+    overflow-x: auto;
+    gap: 10px;
+    padding-bottom: 8px;
+}
+.analytics-grid::-webkit-scrollbar {
+    height: 4px;
+}
+.analytics-grid::-webkit-scrollbar-thumb {
+    background: var(--vscode-scrollbarSlider-background);
+    border-radius: 2px;
+}
+
+.day-card {
+    background: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border, #333);
+    border-radius: 8px;
+    padding: 8px;
+    min-width: 60px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.day-title {
+    font-size: 10px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--vscode-foreground);
+    opacity: 0.8;
+}
+
+.bars-container {
+    display: flex;
+    gap: 4px;
+    height: 50px;
+    align-items: flex-end;
+    margin-top: auto;
+}
+
+.bar-wrapper {
+    width: 10px;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+}
+.bar-wrapper:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.bar {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    border-radius: 3px;
+    transition: height 0.5s ease;
+}

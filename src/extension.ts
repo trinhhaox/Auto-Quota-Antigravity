@@ -6,7 +6,7 @@ import { AutomationService } from './automationService';
 let statusBarItem: vscode.StatusBarItem;
 let latestQuotaData: any = null;
 let globalSidebarProvider: SidebarProvider | null = null;
-let globalContext: vscode.ExtensionContext | null = null;
+export let globalContext: vscode.ExtensionContext | null = null;
 let automationService: AutomationService | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
 const notifiedModels = new Set<string>();

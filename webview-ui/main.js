@@ -67,6 +67,9 @@ function renderDashboard(data) {
     if (data.autoClick) {
         renderAutoClick(data.autoClick);
     }
+    if (data.history) {
+        renderAnalytics(data.history);
+    }
 }
 
 // [ADDED] Renders a single service group (title + user info row + gauges)
@@ -232,3 +235,50 @@ function shortLabel(label) {
         .replace(' (Low)', '↓')
         .replace(' (Medium)', '');
 }
+
+function renderAnalytics(history) {
+    let container = document.getElementById('analytics-module');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'analytics-module';
+        container.className = 'analytics-container';
+        document.getElementById('app').appendChild(container);
+    }
+    
+    if (!history || Object.keys(history).length === 0) {
+        container.innerHTML = '<div class="section-title">Lịch sử (7 Ngày)</div><p class="error-msg">Chưa có dữ liệu</p>';
+        return;
+    }
+
+    const dates = Object.keys(history).sort().slice(-7);
+    let html = '<div class="section-title">Lịch sử Sử dụng (7 Ngày)</div><div class="analytics-grid">';
+
+    dates.forEach(date => {
+        const dayData = history[date];
+        const displayDate = date.split('-').slice(1).join('/'); // MM/DD
+        let dayHtml = `<div class="day-card"><div class="day-title">${displayDate}</div><div class="bars-container">`;
+        
+        Object.keys(dayData).forEach(model => {
+            const val = dayData[model];
+            const isUp = model.startsWith('Claude');
+            let usedPct = isUp ? val : (100 - val);
+            if (usedPct < 0) usedPct = 0;
+            if (usedPct > 100) usedPct = 100;
+
+            const color = model.startsWith('Claude') ? '#FFAB40' : (model.startsWith('Codex') ? '#69F0AE' : '#40C4FF');
+            const cleanModel = model.replace('AG_', '').replace('Claude_', '').replace('Codex_', '');
+            
+            dayHtml += `
+            <div class="bar-wrapper" title="${cleanModel}: ${Math.round(usedPct)}% used">
+                <div class="bar" style="height: ${usedPct}%; background-color: ${color}"></div>
+            </div>`;
+        });
+        
+        dayHtml += `</div></div>`;
+        html += dayHtml;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+

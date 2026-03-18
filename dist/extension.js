@@ -32,6 +32,7 @@ var extension_exports = {};
 __export(extension_exports, {
   activate: () => activate,
   deactivate: () => deactivate,
+  globalContext: () => globalContext,
   setLatestData: () => setLatestData
 });
 module.exports = __toCommonJS(extension_exports);
@@ -355,7 +356,35 @@ var QuotaService = class {
       this.fetchClaudeStatus(),
       this.fetchCodexStatus()
     ]);
-    return { antigravity, claude, codex };
+    let history = {};
+    if (globalContext) {
+      history = globalContext.globalState.get("quota_history", {});
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      if (!history[today]) history[today] = {};
+      const track = (service, quotas) => {
+        quotas.forEach((q) => {
+          const key = `${service}_${q.label.replace(/ \\(.+?\\)/g, "")}`;
+          const isUp = q.direction === "up";
+          const current = q.remaining;
+          if (history[today][key] === void 0) {
+            history[today][key] = current;
+          } else {
+            if (isUp) history[today][key] = Math.max(history[today][key], current);
+            else history[today][key] = Math.min(history[today][key], current);
+          }
+        });
+      };
+      if (antigravity?.quotas) track("AG", antigravity.quotas);
+      if (claude?.quotas) track("Claude", claude.quotas);
+      if (codex?.quotas) track("Codex", codex.quotas);
+      const keys = Object.keys(history).sort();
+      if (keys.length > 7) {
+        const toRemove = keys.slice(0, keys.length - 7);
+        toRemove.forEach((k) => delete history[k]);
+      }
+      globalContext.globalState.update("quota_history", history);
+    }
+    return { antigravity, claude, codex, history };
   }
 };
 
@@ -875,6 +904,7 @@ function deactivate() {
 0 && (module.exports = {
   activate,
   deactivate,
+  globalContext,
   setLatestData
 });
 //# sourceMappingURL=extension.js.map

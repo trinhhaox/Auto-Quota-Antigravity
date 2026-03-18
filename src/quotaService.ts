@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { globalContext } from './extension';
 
 const execAsync = promisify(exec);
 
@@ -57,6 +58,7 @@ export interface DashboardData {
     claude: UserStatus | null;
     codex: UserStatus | null;
     autoClick?: any;
+    history?: any;
 }
 
 const API_PATH = '/exa.language_server_pb.LanguageServerService/GetUserStatus';
@@ -356,7 +358,41 @@ export class QuotaService {
             this.fetchClaudeStatus(),
             this.fetchCodexStatus()
         ]);
-        return { antigravity, claude, codex };
+
+        // --- HISTORY TRACKING ---
+        let history: any = {};
+        if (globalContext) {
+            history = globalContext.globalState.get('quota_history', {}) as any;
+            const today = new Date().toISOString().split('T')[0];
+            if (!history[today]) history[today] = {};
+            
+            const track = (service: string, quotas: QuotaInfo[]) => {
+                quotas.forEach(q => {
+                    const key = `${service}_${q.label.replace(/ \\(.+?\\)/g, '')}`;
+                    const isUp = q.direction === 'up';
+                    const current = q.remaining;
+                    if (history[today][key] === undefined) {
+                        history[today][key] = current;
+                    } else {
+                        if (isUp) history[today][key] = Math.max(history[today][key], current);
+                        else history[today][key] = Math.min(history[today][key], current);
+                    }
+                });
+            };
+            
+            if (antigravity?.quotas) track('AG', antigravity.quotas);
+            if (claude?.quotas) track('Claude', claude.quotas);
+            if (codex?.quotas) track('Codex', codex.quotas);
+            
+            const keys = Object.keys(history).sort();
+            if (keys.length > 7) {
+                const toRemove = keys.slice(0, keys.length - 7);
+                toRemove.forEach(k => delete history[k]);
+            }
+            globalContext.globalState.update('quota_history', history);
+        }
+
+        return { antigravity, claude, codex, history };
     }
 }
 
