@@ -36,7 +36,7 @@ __export(extension_exports, {
   setLatestData: () => setLatestData
 });
 module.exports = __toCommonJS(extension_exports);
-var vscode4 = __toESM(require("vscode"));
+var vscode5 = __toESM(require("vscode"));
 
 // src/quotaService.ts
 var http = __toESM(require("http"));
@@ -702,6 +702,68 @@ var AutomationService = class _AutomationService {
   }
 };
 
+// src/updater.ts
+var vscode4 = __toESM(require("vscode"));
+var https = __toESM(require("https"));
+var REPO_OWNER = "trinhvanhao";
+var REPO_NAME = "Auto-Quota-Antigravity";
+var API_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+async function checkForUpdates(context) {
+  try {
+    const currentVersion = context.extension.packageJSON.version;
+    if (!currentVersion) return;
+    const options = {
+      headers: {
+        "User-Agent": "VSCode-Auto-Quota-Antigravity-Extension"
+      }
+    };
+    https.get(API_URL, options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        if (res.statusCode === 200) {
+          try {
+            const release = JSON.parse(data);
+            const latestTag = release.tag_name;
+            if (!latestTag) return;
+            const latestVersion = latestTag.replace(/^v/, "");
+            if (isNewerVersion(currentVersion, latestVersion)) {
+              showUpdateNotification(latestVersion, release.html_url);
+            }
+          } catch (e) {
+            console.error("Failed to parse GitHub release data", e);
+          }
+        }
+      });
+    }).on("error", (e) => {
+      console.error("Error checking for updates:", e);
+    });
+  } catch (err) {
+    console.error("Auto-Updater error:", err);
+  }
+}
+function isNewerVersion(current, latest) {
+  const currentParts = current.split(".").map(Number);
+  const latestParts = latest.split(".").map(Number);
+  for (let i = 0; i < Math.max(currentParts.length, latestParts.length); i++) {
+    const c = currentParts[i] || 0;
+    const l = latestParts[i] || 0;
+    if (l > c) return true;
+    if (l < c) return false;
+  }
+  return false;
+}
+async function showUpdateNotification(newVersion, url2) {
+  const action = "T\u1EA3i V\u1EC1 Ngay";
+  const message = `M\u1ED9t phi\xEAn b\u1EA3n m\u1EDBi c\u1EE7a Auto Quota Antigravity (v${newVersion}) \u0111\xE3 s\u1EB5n s\xE0ng!`;
+  const result = await vscode4.window.showInformationMessage(message, action);
+  if (result === action) {
+    vscode4.env.openExternal(vscode4.Uri.parse(url2));
+  }
+}
+
 // src/extension.ts
 var statusBarItem;
 var latestQuotaData = null;
@@ -722,20 +784,20 @@ function activate(context) {
   globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService);
   automationService = new AutomationService(context);
   context.subscriptions.push(
-    vscode4.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
+    vscode5.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
   );
-  statusBarItem = vscode4.window.createStatusBarItem(vscode4.StatusBarAlignment.Right, 100);
+  statusBarItem = vscode5.window.createStatusBarItem(vscode5.StatusBarAlignment.Right, 100);
   statusBarItem.command = "sqm.sidebar.focus";
   statusBarItem.text = "$(dashboard) Auto Quota Antigravity";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
   context.subscriptions.push(
-    vscode4.commands.registerCommand("sqm.refresh", async () => {
+    vscode5.commands.registerCommand("sqm.refresh", async () => {
       if (globalSidebarProvider) await globalSidebarProvider.updateData();
     })
   );
   context.subscriptions.push(
-    vscode4.commands.registerCommand("ag-manager.updateAutoClick", async (config) => {
+    vscode5.commands.registerCommand("ag-manager.updateAutoClick", async (config) => {
       if (automationService) {
         await automationService.patchSettings(config);
         setLatestData(latestQuotaData);
@@ -746,11 +808,14 @@ function activate(context) {
     if (globalSidebarProvider) globalSidebarProvider.updateData();
   }, 2e3);
   startAutoRefresh();
-  context.subscriptions.push(vscode4.workspace.onDidChangeConfiguration((e) => {
+  context.subscriptions.push(vscode5.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration("sqm.refreshInterval")) {
       startAutoRefresh();
     }
   }));
+  setTimeout(() => {
+    checkForUpdates(context);
+  }, 1e4);
 }
 function getQuotaColor(pct, direction = "down") {
   if (direction === "up") {
@@ -861,7 +926,7 @@ function refreshStatusBar() {
   statusBarItem.text = `$(dashboard)  ${groupsText || "Auto Quota Antigravity"}`;
   const svg = buildTooltipSVG(latestQuotaData);
   const base64 = Buffer.from(svg).toString("base64");
-  const tooltip = new vscode4.MarkdownString();
+  const tooltip = new vscode5.MarkdownString();
   tooltip.appendMarkdown(`![Quota Info](data:image/svg+xml;base64,${base64})
 
 `);
@@ -887,14 +952,14 @@ function setLatestData(data) {
 }
 function startAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
-  const config = vscode4.workspace.getConfiguration("sqm");
+  const config = vscode5.workspace.getConfiguration("sqm");
   const intervalMins = config.get("refreshInterval") || 5;
   refreshTimer = setInterval(() => {
     if (globalSidebarProvider) globalSidebarProvider.updateData();
   }, intervalMins * 60 * 1e3);
 }
 function checkNotifications(data) {
-  const config = vscode4.workspace.getConfiguration("sqm");
+  const config = vscode5.workspace.getConfiguration("sqm");
   if (!config.get("enableNotifications")) return;
   const checkQuota = (serviceName, quotas) => {
     if (!quotas) return;
@@ -917,9 +982,9 @@ function checkNotifications(data) {
         }
       }
       if (shouldNotify) {
-        vscode4.window.showWarningMessage(message, "Dashboard").then((selection) => {
+        vscode5.window.showWarningMessage(message, "Dashboard").then((selection) => {
           if (selection === "Dashboard") {
-            vscode4.commands.executeCommand("sqm.sidebar.focus");
+            vscode5.commands.executeCommand("sqm.sidebar.focus");
           }
         });
         notifiedModels.add(modelKey);

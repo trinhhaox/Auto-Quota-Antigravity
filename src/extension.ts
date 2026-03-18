@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { QuotaService } from './quotaService';
 import { SidebarProvider } from './sidebarProvider';
 import { AutomationService } from './automationService';
+import { checkForUpdates } from './updater';
 
 let statusBarItem: vscode.StatusBarItem;
 let latestQuotaData: any = null;
@@ -63,6 +64,11 @@ export function activate(context: vscode.ExtensionContext) {
             startAutoRefresh();
         }
     }));
+
+    // [AUTO-UPDATER] Check for new version from GitHub after 10s
+    setTimeout(() => {
+        checkForUpdates(context);
+    }, 10000);
 }
 
 function getQuotaColor(pct: number, direction: 'up' | 'down' = 'down'): { hex: string, dot: string } {
