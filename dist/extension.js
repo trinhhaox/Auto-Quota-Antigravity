@@ -69,6 +69,13 @@ var API_PATH = "/exa.language_server_pb.LanguageServerService/GetUserStatus";
 var QuotaService = class {
   serverInfo = null;
   discovering = null;
+  // [ADDED] Cache state
+  cachedClaude = null;
+  claudeLastFetch = 0;
+  cachedCodex = null;
+  codexLastFetch = 0;
+  CACHE_TTL = 6e4;
+  // 60 seconds
   // [ADDED] Optional logger
   logger;
   constructor(logger) {
@@ -253,6 +260,15 @@ var QuotaService = class {
   }
   // ─── [ADDED] Claude Code Status ───────────────────────────────────────────
   async fetchClaudeStatus() {
+    const now = Date.now();
+    if (this.cachedClaude && now - this.claudeLastFetch < this.CACHE_TTL) {
+      return this.cachedClaude;
+    }
+    this.cachedClaude = await this._fetchClaudeStatusImpl();
+    this.claudeLastFetch = now;
+    return this.cachedClaude;
+  }
+  async _fetchClaudeStatusImpl() {
     this.log("Fetching Claude Status...");
     try {
       let binPath = "";
@@ -318,6 +334,15 @@ var QuotaService = class {
   }
   // ─── [ADDED] Codex Status ────────────────────────────────────────────────
   async fetchCodexStatus() {
+    const now = Date.now();
+    if (this.cachedCodex && now - this.codexLastFetch < this.CACHE_TTL) {
+      return this.cachedCodex;
+    }
+    this.cachedCodex = await this._fetchCodexStatusImpl();
+    this.codexLastFetch = now;
+    return this.cachedCodex;
+  }
+  async _fetchCodexStatusImpl() {
     this.log("Fetching Codex Status...");
     try {
       const ext = vscode.extensions.getExtension("openai.chatgpt");
@@ -680,6 +705,7 @@ var AutomationService = class _AutomationService {
 // src/extension.ts
 var statusBarItem;
 var latestQuotaData = null;
+var latestAutoStatus = null;
 var globalSidebarProvider = null;
 var globalContext = null;
 var automationService = null;
@@ -845,10 +871,16 @@ function refreshStatusBar() {
   statusBarItem.tooltip = tooltip;
 }
 function setLatestData(data) {
+  const autoStatus = automationService ? automationService.dumpDiagnostics() : {};
+  const dataStr = JSON.stringify(data);
+  const autoStr = JSON.stringify(autoStatus);
+  if (latestQuotaData && JSON.stringify(latestQuotaData) === dataStr && latestAutoStatus && JSON.stringify(latestAutoStatus) === autoStr) {
+    return;
+  }
   latestQuotaData = data;
+  latestAutoStatus = autoStatus;
   refreshStatusBar();
   if (globalSidebarProvider && data) {
-    const autoStatus = automationService ? automationService.dumpDiagnostics() : {};
     globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus });
   }
   checkNotifications(data);

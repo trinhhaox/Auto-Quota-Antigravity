@@ -66,6 +66,14 @@ const API_PATH = '/exa.language_server_pb.LanguageServerService/GetUserStatus';
 export class QuotaService {
     private serverInfo: { port: number, token: string } | null = null;
     private discovering: Promise<boolean> | null = null;
+    
+    // [ADDED] Cache state
+    private cachedClaude: UserStatus | null = null;
+    private claudeLastFetch: number = 0;
+    private cachedCodex: UserStatus | null = null;
+    private codexLastFetch: number = 0;
+    private readonly CACHE_TTL = 60000; // 60 seconds
+    
     // [ADDED] Optional logger
     private logger?: vscode.OutputChannel;
 
@@ -246,6 +254,16 @@ export class QuotaService {
 
     // ─── [ADDED] Claude Code Status ───────────────────────────────────────────
     async fetchClaudeStatus(): Promise<UserStatus | null> {
+        const now = Date.now();
+        if (this.cachedClaude && (now - this.claudeLastFetch < this.CACHE_TTL)) {
+            return this.cachedClaude;
+        }
+        this.cachedClaude = await this._fetchClaudeStatusImpl();
+        this.claudeLastFetch = now;
+        return this.cachedClaude;
+    }
+
+    private async _fetchClaudeStatusImpl(): Promise<UserStatus | null> {
         this.log("Fetching Claude Status...");
         try {
             // Find claude via VS Code Extension API first
@@ -314,6 +332,16 @@ export class QuotaService {
 
     // ─── [ADDED] Codex Status ────────────────────────────────────────────────
     async fetchCodexStatus(): Promise<UserStatus | null> {
+        const now = Date.now();
+        if (this.cachedCodex && (now - this.codexLastFetch < this.CACHE_TTL)) {
+            return this.cachedCodex;
+        }
+        this.cachedCodex = await this._fetchCodexStatusImpl();
+        this.codexLastFetch = now;
+        return this.cachedCodex;
+    }
+
+    private async _fetchCodexStatusImpl(): Promise<UserStatus | null> {
         this.log("Fetching Codex Status...");
         try {
             // Check if Codex extension is installed in Antigravity

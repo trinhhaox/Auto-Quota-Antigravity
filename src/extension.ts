@@ -5,6 +5,7 @@ import { AutomationService } from './automationService';
 
 let statusBarItem: vscode.StatusBarItem;
 let latestQuotaData: any = null;
+let latestAutoStatus: any = null; // [ADDED] Track autoStatus diff
 let globalSidebarProvider: SidebarProvider | null = null;
 export let globalContext: vscode.ExtensionContext | null = null;
 let automationService: AutomationService | null = null;
@@ -228,10 +229,20 @@ function refreshStatusBar() {
 }
 
 export function setLatestData(data: any) {
+    const autoStatus = automationService ? automationService.dumpDiagnostics() : {};
+    const dataStr = JSON.stringify(data);
+    const autoStr = JSON.stringify(autoStatus);
+    
+    if (latestQuotaData && JSON.stringify(latestQuotaData) === dataStr &&
+        latestAutoStatus && JSON.stringify(latestAutoStatus) === autoStr) {
+        return; // No differences, skip processing
+    }
+
     latestQuotaData = data;
+    latestAutoStatus = autoStatus;
+    
     refreshStatusBar();
     if (globalSidebarProvider && data) {
-        const autoStatus = automationService ? automationService.dumpDiagnostics() : {};
         globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus });
     }
     // [V10] Check for low quotas
