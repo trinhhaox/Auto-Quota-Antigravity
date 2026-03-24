@@ -72,11 +72,10 @@ function renderDashboard(data) {
 
     document.getElementById('quota-list').innerHTML = html;
 
-    if (data.antigravity && data.antigravity.autoClick) {
-        renderAutoClick(data.antigravity.autoClick);
-    }
     if (data.autoClick) {
         renderAutoClick(data.autoClick);
+    } else if (data.antigravity && data.antigravity.autoClick) {
+        renderAutoClick(data.antigravity.autoClick);
     }
     if (data.history) {
         renderAnalytics(data.history);
@@ -241,7 +240,8 @@ function shortLabel(label) {
 function renderSettingsData(settings) {
     const fields = [
         { key: 'claude.sessionKey', label: 'Claude Session Key', type: 'password', placeholder: 'sk-ant-sid02-...' },
-        { key: 'claude.organizationId', label: 'Organization ID', type: 'text', placeholder: 'org-uuid' },
+        { key: 'claude.cfClearance', label: 'CF Clearance', type: 'password', placeholder: 'cf_clearance cookie' },
+        { key: 'claude.organizationId', label: 'Organization ID', type: 'text', placeholder: 'auto-detected' },
         { key: 'claude.usagePeriod', label: 'Usage Period', type: 'select', options: [
             { value: '5-hour', label: '5 Hour' },
             { value: '7-day', label: '7 Day' },

@@ -2,7 +2,7 @@
     "name": "auto-quota-antigravity",
     "displayName": "Auto Quota Antigravity",
     "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
-    "version": "1.2.5",
+    "version": "1.2.6",
     "publisher": "BiViPi",
     "author": {
         "name": "BiViPi",

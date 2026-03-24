@@ -631,6 +631,7 @@ var SidebarProvider = class _SidebarProvider {
       type: "settings",
       settings: {
         "claude.sessionKey": sqm.get("claude.sessionKey") || "",
+        "claude.cfClearance": sqm.get("claude.cfClearance") || "",
         "claude.organizationId": sqm.get("claude.organizationId") || "",
         "claude.usagePeriod": sqm.get("claude.usagePeriod") || "both",
         "refreshInterval": sqm.get("refreshInterval") || 5,

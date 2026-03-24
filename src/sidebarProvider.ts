@@ -65,6 +65,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             type: 'settings',
             settings: {
                 'claude.sessionKey': sqm.get<string>('claude.sessionKey') || '',
+                'claude.cfClearance': sqm.get<string>('claude.cfClearance') || '',
                 'claude.organizationId': sqm.get<string>('claude.organizationId') || '',
                 'claude.usagePeriod': sqm.get<string>('claude.usagePeriod') || 'both',
                 'refreshInterval': sqm.get<number>('refreshInterval') || 5,
