@@ -5,10 +5,12 @@ window.addEventListener("message", (event) => {
     const message = event.data;
     switch (message.type) {
         case "update":
-            renderDashboard(message.data); // Assuming updateUI should call renderDashboard or renderDashboard is renamed
+            renderDashboard(message.data);
             break;
         case "loading":
-            // Don't clear UI, just show a subtle loading if needed
+            break;
+        case "settings":
+            renderSettingsData(message.settings);
             break;
     }
 });
@@ -21,12 +23,21 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
     vscode.postMessage({ type: 'onRefresh' });
 });
 
+// Settings toggle
+document.getElementById('settings-btn').addEventListener('click', () => {
+    const panel = document.getElementById('settings-panel');
+    const isHidden = panel.classList.toggle('hidden');
+    if (!isHidden) {
+        vscode.postMessage({ type: 'getSettings' });
+    }
+});
+
 // [MODIFIED] renderDashboard: data is now DashboardData {antigravity, claude, codex}
 // Old: data was UserStatus directly. New: data.antigravity = UserStatus | null
 function renderDashboard(data) {
     if (!data) {
         document.getElementById('user-info').innerHTML = '';
-        document.getElementById('quota-list').innerHTML = '<p class="error-msg">⚠️ Local server not found.<br>Ensure Antigravity IDE is running.</p>';
+        document.getElementById('quota-list').innerHTML = '<p class="error-msg">Local server not found.<br>Ensure Antigravity IDE is running.</p>';
         return;
     }
 
@@ -81,10 +92,12 @@ function renderServiceGroup(title, status) {
     const infoLine = `${status.tier} • ${status.email}`;
 
     let gaugesHtml = '';
-    if (isAuthenticated && status.quotas && status.quotas.length > 0) {
+    if (status.error) {
+        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">${status.error}</p>`;
+    } else if (isAuthenticated && status.quotas && status.quotas.length > 0) {
         gaugesHtml = `<div class="gauge-grid">${status.quotas.map(q => createGauge(q)).join('')}</div>`;
     } else if (!isAuthenticated) {
-        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">🔒 ${status.email}</p>`;
+        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">${status.email}</p>`;
     }
 
     return `
@@ -188,34 +201,23 @@ function formatTime(t) {
 
 function createGauge(quota) {
     const pct = Math.round(quota.remaining);
-    const R = 30;
-    const C = 2 * Math.PI * R;           // circumference
-    const filled = C * (pct / 100);
-    const dash = `${filled} ${C}`;
 
     // [MODIFIED] User displayValue if provided (e.g. "23"), otherwise pct%
     const centerText = quota.displayValue !== undefined ? quota.displayValue : `${pct}%`;
-
-    // [MODIFIED] Directionality: Up (Clockwise) or Down (Counter-clockwise)
-    // Default is down (counter-clockwise) for Antigravity & Codex
-    const isDown = quota.direction === 'down' || quota.direction === undefined;
-    const transform = isDown
-        ? "rotate(-90 40 40) scale(-1, 1) translate(-80, 0)" // Counter-clockwise mirror
-        : "rotate(-90 40 40)";                             // Clockwise
+    const label = shortLabel(quota.label);
+    const time = formatTime(quota.resetTime);
+    const barWidth = Math.max(0, Math.min(100, pct));
 
     return `
-        <div class="gauge-item">
-            <svg class="gauge-svg" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
-                <circle class="gauge-track" cx="40" cy="40" r="${R}"/>
-                <circle class="gauge-arc" cx="40" cy="40" r="${R}"
-                    stroke="${quota.themeColor}"
-                    stroke-dasharray="${dash}"
-                    stroke-dashoffset="0"
-                    transform="${transform}"/>
-                <text class="gauge-pct" x="40" y="40">${centerText}</text>
-            </svg>
-            <div class="gauge-label">${shortLabel(quota.label)}</div>
-            <div class="gauge-time">${formatTime(quota.resetTime)}</div>
+        <div class="quota-row">
+            <div class="quota-main">
+                <div class="quota-label">${label}</div>
+                <div class="quota-time">${time}</div>
+                <div class="quota-bar">
+                    <div class="quota-bar-fill" style="width: ${barWidth}%; background-color: ${quota.themeColor};"></div>
+                </div>
+            </div>
+            <div class="quota-value">${centerText}</div>
         </div>
     `;
 }
@@ -230,10 +232,93 @@ function shortLabel(label) {
         .replace('Claude Opus', 'Opus')
         .replace('Claude Haiku', 'Haiku')
         .replace('GPT-OSS', 'GPT')
-        .replace(' (Thinking)', ' 🧠')
+        .replace(' (Thinking)', '')
         .replace(' (High)', '↑')
         .replace(' (Low)', '↓')
         .replace(' (Medium)', '');
+}
+
+function renderSettingsData(settings) {
+    const fields = [
+        { key: 'claude.sessionKey', label: 'Claude Session Key', type: 'password', placeholder: 'sk-ant-sid02-...' },
+        { key: 'claude.organizationId', label: 'Organization ID', type: 'text', placeholder: 'org-uuid' },
+        { key: 'claude.usagePeriod', label: 'Usage Period', type: 'select', options: [
+            { value: '5-hour', label: '5 Hour' },
+            { value: '7-day', label: '7 Day' },
+            { value: 'both', label: 'Both' }
+        ]},
+        { key: 'refreshInterval', label: 'Refresh Interval (min)', type: 'select', options: [
+            { value: 1, label: '1' }, { value: 2, label: '2' }, { value: 5, label: '5' },
+            { value: 10, label: '10' }, { value: 15, label: '15' }, { value: 30, label: '30' }
+        ]},
+        { key: 'enableNotifications', label: 'Notifications', type: 'toggle' },
+    ];
+
+    const panel = document.getElementById('settings-panel');
+    let html = '<div class="section-title">Settings</div>';
+
+    fields.forEach(f => {
+        const val = settings[f.key] ?? '';
+        html += '<div class="settings-row">';
+        html += `<label class="settings-label">${f.label}</label>`;
+
+        if (f.type === 'password' || f.type === 'text') {
+            const masked = f.type === 'password' && val ? '••••••••' : '';
+            html += `<div class="settings-input-wrap">
+                <input class="settings-input" type="${f.type === 'password' ? 'password' : 'text'}"
+                    data-key="${f.key}" value="${val}" placeholder="${f.placeholder || ''}"
+                    autocomplete="off" spellcheck="false">
+                ${f.type === 'password' ? '<button class="settings-eye" data-key="' + f.key + '">Show</button>' : ''}
+            </div>`;
+        } else if (f.type === 'select') {
+            html += `<select class="settings-select" data-key="${f.key}">`;
+            f.options.forEach(opt => {
+                const sel = String(val) === String(opt.value) ? 'selected' : '';
+                html += `<option value="${opt.value}" ${sel}>${opt.label}</option>`;
+            });
+            html += '</select>';
+        } else if (f.type === 'toggle') {
+            html += `<label class="switch"><input type="checkbox" data-key="${f.key}" ${val ? 'checked' : ''}><span class="slider"></span></label>`;
+        }
+
+        html += '</div>';
+    });
+
+    html += '<button class="settings-save" id="save-settings-btn">Save</button>';
+    panel.innerHTML = html;
+
+    // Eye toggle for password fields
+    panel.querySelectorAll('.settings-eye').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const key = btn.getAttribute('data-key');
+            const input = panel.querySelector(`input[data-key="${key}"]`);
+            if (input.type === 'password') {
+                input.type = 'text';
+                btn.textContent = 'Hide';
+            } else {
+                input.type = 'password';
+                btn.textContent = 'Show';
+            }
+        });
+    });
+
+    // Save button
+    document.getElementById('save-settings-btn').addEventListener('click', () => {
+        const result = {};
+        panel.querySelectorAll('[data-key]').forEach(el => {
+            if (el.tagName === 'BUTTON') return;
+            const key = el.getAttribute('data-key');
+            if (el.type === 'checkbox') {
+                result[key] = el.checked;
+            } else {
+                let v = el.value.trim();
+                // Convert numeric selects
+                if (key === 'refreshInterval') v = parseInt(v);
+                result[key] = v;
+            }
+        });
+        vscode.postMessage({ type: 'saveSettings', settings: result });
+    });
 }
 
 function renderAnalytics(history) {
@@ -246,12 +331,12 @@ function renderAnalytics(history) {
     }
     
     if (!history || Object.keys(history).length === 0) {
-        container.innerHTML = '<div class="section-title">Lịch sử (7 Ngày)</div><p class="error-msg">Chưa có dữ liệu</p>';
+        container.innerHTML = '<div class="section-title">Lịch sử 7 ngày</div><p class="error-msg">Chưa có dữ liệu</p>';
         return;
     }
 
     const dates = Object.keys(history).sort().slice(-7);
-    let html = '<div class="section-title">Lịch sử Sử dụng (7 Ngày)</div><div class="analytics-grid">';
+    let html = '<div class="section-title">Lịch sử sử dụng (7 ngày)</div><div class="analytics-grid">';
 
     dates.forEach(date => {
         const dayData = history[date];
@@ -259,8 +344,11 @@ function renderAnalytics(history) {
         let dayHtml = `<div class="day-card"><div class="day-title">${displayDate}</div><div class="bars-container">`;
         
         Object.keys(dayData).forEach(model => {
-            const val = dayData[model];
-            const isUp = model.startsWith('Claude');
+            const entry = dayData[model];
+            // Support both old format (plain number) and new format ({value, direction})
+            const val = typeof entry === 'object' ? entry.value : entry;
+            const direction = typeof entry === 'object' ? entry.direction : (model.startsWith('Claude') ? 'up' : 'down');
+            const isUp = direction === 'up';
             let usedPct = isUp ? val : (100 - val);
             if (usedPct < 0) usedPct = 0;
             if (usedPct > 100) usedPct = 100;
@@ -281,4 +369,3 @@ function renderAnalytics(history) {
     html += '</div>';
     container.innerHTML = html;
 }
-

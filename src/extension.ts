@@ -209,14 +209,14 @@ function refreshStatusBar() {
     // 2. Claude (if authenticated)
     if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length > 0) {
         const cQuota = latestQuotaData.claude.quotas[0];
-        const color = getQuotaColor(cQuota.remaining, 'up');
+        const color = getQuotaColor(cQuota.remaining, cQuota.direction || 'up');
         groupsText += `  Claude ${color.dot}`;
     }
 
     // 3. Codex (if authenticated)
     if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length > 0) {
         const cxQuota = latestQuotaData.codex.quotas[0];
-        const color = getQuotaColor(cxQuota.remaining, 'down');
+        const color = getQuotaColor(cxQuota.remaining, cxQuota.direction || 'down');
         groupsText += `  Codex ${color.dot}`;
     }
 
@@ -276,20 +276,20 @@ function checkNotifications(data: any) {
             const modelKey = `${serviceName}-${q.label}`;
             if (notifiedModels.has(modelKey)) return;
 
-            const isClaude = serviceName === 'Claude';
+            const isUp = q.direction === 'up';
             const pct = Math.round(q.remaining);
 
             let shouldNotify = false;
             let message = "";
 
-            if (isClaude) {
-                // Claude counts UP (usage)
+            if (isUp) {
+                // Counting UP (usage) - alert when high
                 if (pct >= 80) {
                     shouldNotify = true;
-                    message = `Claude [${q.label}] usage is high (${pct}%).`;
+                    message = `${serviceName} [${q.label}] usage is high (${pct}%).`;
                 }
             } else {
-                // Antigravity/Codex count DOWN (remaining)
+                // Counting DOWN (remaining) - alert when low
                 if (pct <= 20) {
                     shouldNotify = true;
                     message = `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;

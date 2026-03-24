@@ -32,8 +32,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             if (data.type === "onRefresh") {
                 this.updateData();
             } else if (data.type === "onAutoClickChange") {
-                // We'll need a reference to autoClickManager or use a global command/state
                 vscode.commands.executeCommand("ag-manager.updateAutoClick", data.config);
+            } else if (data.type === "getSettings") {
+                this._sendSettings();
+            } else if (data.type === "saveSettings") {
+                await this._saveSettings(data.settings);
             }
         });
     }
@@ -55,6 +58,40 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         setLatestData(data); // Cập nhật global state và status bar
     }
 
+    private _sendSettings() {
+        const sqm = vscode.workspace.getConfiguration('sqm');
+        const ag = vscode.workspace.getConfiguration('ag-manager');
+        this._view?.webview.postMessage({
+            type: 'settings',
+            settings: {
+                'claude.sessionKey': sqm.get<string>('claude.sessionKey') || '',
+                'claude.organizationId': sqm.get<string>('claude.organizationId') || '',
+                'claude.usagePeriod': sqm.get<string>('claude.usagePeriod') || 'both',
+                'refreshInterval': sqm.get<number>('refreshInterval') || 5,
+                'enableNotifications': sqm.get<boolean>('enableNotifications') !== false,
+                'automation.enabled': ag.get<boolean>('automation.enabled') !== false,
+            }
+        });
+    }
+
+    private async _saveSettings(settings: Record<string, any>) {
+        const sqm = vscode.workspace.getConfiguration('sqm');
+        const ag = vscode.workspace.getConfiguration('ag-manager');
+        const target = vscode.ConfigurationTarget.Global;
+
+        for (const [key, value] of Object.entries(settings)) {
+            if (key.startsWith('automation.')) {
+                await ag.update(key, value, target);
+            } else {
+                await sqm.update(key, value, target);
+            }
+        }
+
+        this._sendSettings();
+        this.updateData();
+        vscode.window.showInformationMessage('Settings saved!');
+    }
+
     private _getHtmlForWebview(webview: vscode.Webview) {
         const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, "webview-ui", "style.css"));
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, "webview-ui", "main.js"));
@@ -70,8 +107,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 <div id="app">
                     <div class="header">
                         <h1>Quota Dashboard</h1>
-                        <button id="refresh-btn">Refresh</button>
+                        <div class="header-actions">
+                            <button id="settings-btn" title="Settings">&#9881;</button>
+                            <button id="refresh-btn">Refresh</button>
+                        </div>
                     </div>
+                    <div id="settings-panel" class="settings-container hidden"></div>
                     <div id="user-info"></div>
                     <div id="quota-list">
                         <p class="loading">Establishing connection...</p>

@@ -1,5 +1,15 @@
 # Changelog - AG Manager
 
+## [1.2.2] - 2026-03-24
+
+### 🇻🇳 Tiếng Việt
+- **UI Tối Giản:** Giao diện sidebar được tinh gọn, giảm hiệu ứng và đường viền.
+- **List Layout:** Thay gauge vòng tròn bằng danh sách hàng với thanh tiến trình mảnh.
+
+### 🇺🇸 English
+- **Minimal UI:** Sidebar visuals simplified with fewer effects and cleaner borders.
+- **List Layout:** Replaced circular gauges with a row list layout and slim progress bars.
+
 ## [1.2.0] - 2026-03-17
 
 ### 🇻🇳 Tiếng Việt

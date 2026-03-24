@@ -2,7 +2,7 @@
     "name": "auto-quota-antigravity",
     "displayName": "Auto Quota Antigravity",
     "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
-    "version": "1.2.1",
+    "version": "1.2.5",
     "publisher": "BiViPi",
     "author": {
         "name": "BiViPi",
@@ -69,6 +69,31 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Enable notifications for low quotas"
+                },
+                "sqm.claude.sessionKey": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Claude.ai sessionKey cookie (F12 → Application → Cookies → sessionKey)"
+                },
+                "sqm.claude.cfClearance": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Claude.ai cf_clearance cookie (required to bypass Cloudflare). Get from F12 → Application → Cookies → cf_clearance"
+                },
+                "sqm.claude.organizationId": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Claude.ai organization UUID (auto-detected from ~/.claude.json if empty)"
+                },
+                "sqm.claude.usagePeriod": {
+                    "type": "string",
+                    "enum": [
+                        "5-hour",
+                        "7-day",
+                        "both"
+                    ],
+                    "default": "both",
+                    "description": "Which Claude.ai usage windows to display in the dashboard."
                 },
                 "ag-manager.automation.enabled": {
                     "type": "boolean",

@@ -40,6 +40,7 @@ var vscode5 = __toESM(require("vscode"));
 
 // src/quotaService.ts
 var http = __toESM(require("http"));
+var https = __toESM(require("https"));
 var import_child_process = require("child_process");
 var import_util = require("util");
 var vscode = __toESM(require("vscode"));
@@ -83,6 +84,129 @@ var QuotaService = class {
   }
   log(msg) {
     this.logger?.appendLine(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] [QuotaService] ${msg}`);
+  }
+  getClaudeLocalConfig() {
+    const sqmConfig = vscode.workspace.getConfiguration("sqm");
+    let organizationId = sqmConfig.get("claude.organizationId")?.trim() || "";
+    let email = "";
+    let displayName = "";
+    let subscriptionType = "";
+    try {
+      const claudeConfigPath = path.join(os.homedir(), ".claude.json");
+      if (fs.existsSync(claudeConfigPath)) {
+        const raw = fs.readFileSync(claudeConfigPath, "utf8");
+        const parsed = JSON.parse(raw);
+        const oauth = parsed?.oauthAccount;
+        if (oauth) {
+          if (!organizationId && oauth.organizationUuid) {
+            organizationId = oauth.organizationUuid;
+          }
+          email = oauth.emailAddress || "";
+          displayName = oauth.displayName || "";
+        }
+      }
+    } catch {
+    }
+    const usagePeriod = sqmConfig.get("claude.usagePeriod") || "both";
+    return { organizationId, email, displayName, subscriptionType, usagePeriod };
+  }
+  async fetchClaudeUsage(sessionKey, organizationId) {
+    const sqmConfig = vscode.workspace.getConfiguration("sqm");
+    const cfClearance = sqmConfig.get("claude.cfClearance")?.trim() || "";
+    let cookieStr = `sessionKey=${sessionKey}; lastActiveOrg=${organizationId}`;
+    if (cfClearance) {
+      cookieStr += `; cf_clearance=${cfClearance}`;
+    }
+    return new Promise((resolve, reject) => {
+      const options = {
+        method: "GET",
+        hostname: "claude.ai",
+        path: `/api/organizations/${organizationId}/usage`,
+        headers: {
+          "accept": "application/json",
+          "content-type": "application/json",
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "anthropic-client-platform": "web_claude_ai",
+          "origin": "https://claude.ai",
+          "referer": "https://claude.ai/",
+          "cookie": cookieStr,
+          "sec-fetch-dest": "empty",
+          "sec-fetch-mode": "cors",
+          "sec-fetch-site": "same-origin"
+        },
+        timeout: 1e4
+      };
+      const req = https.request(options, (res) => {
+        let data = "";
+        res.on("data", (chunk) => data += chunk);
+        res.on("end", () => {
+          if (res.statusCode === 403) {
+            const hint = cfClearance ? "sessionKey or cf_clearance expired. Update from browser." : "Cloudflare blocked. Add cf_clearance cookie in settings.";
+            return reject(new Error(`HTTP 403 \u2014 ${hint}`));
+          }
+          if (res.statusCode === 401) {
+            return reject(new Error("HTTP 401 \u2014 Unauthorized. Check organizationId."));
+          }
+          if (res.statusCode !== 200) {
+            return reject(new Error(`HTTP ${res.statusCode}`));
+          }
+          try {
+            const parsed = JSON.parse(data);
+            resolve(parsed);
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+      req.on("error", reject);
+      req.on("timeout", () => {
+        req.destroy();
+        reject(new Error("Timeout"));
+      });
+      req.end();
+    });
+  }
+  buildClaudeQuotas(usageData, usagePeriod) {
+    const quotas = [];
+    const five = usageData?.five_hour;
+    const seven = usageData?.seven_day;
+    const pushFive = () => {
+      if (!five) return;
+      const raw = Number(five.utilization || 0);
+      const pct = Math.max(0, Math.min(100, raw <= 1 ? raw * 100 : raw));
+      quotas.push({
+        label: "Session (5hr)",
+        remaining: pct,
+        displayValue: `${Math.round(pct)}%`,
+        resetTime: "5h",
+        themeColor: "#FFAB40",
+        style: "fluid",
+        direction: "up"
+      });
+    };
+    const pushSeven = () => {
+      if (!seven) return;
+      const raw = Number(seven.utilization || 0);
+      const pct = Math.max(0, Math.min(100, raw <= 1 ? raw * 100 : raw));
+      quotas.push({
+        label: "Weekly (7day)",
+        remaining: pct,
+        displayValue: `${Math.round(pct)}%`,
+        resetTime: "7d",
+        themeColor: "#FF7043",
+        style: "fluid",
+        direction: "up"
+      });
+    };
+    if (usagePeriod === "5-hour") {
+      pushFive();
+    } else if (usagePeriod === "7-day") {
+      pushSeven();
+    } else {
+      pushFive();
+      pushSeven();
+    }
+    return quotas;
   }
   async discoverLocalServer() {
     if (this.discovering) return this.discovering;
@@ -271,61 +395,78 @@ var QuotaService = class {
   async _fetchClaudeStatusImpl() {
     this.log("Fetching Claude Status...");
     try {
-      let binPath = "";
-      const exeName = process.platform === "win32" ? "claude.exe" : "claude";
-      const ext = vscode.extensions.getExtension("anthropic.claude-code");
-      if (ext) {
-        const candidate = path.join(ext.extensionPath, "resources", "native-binary", exeName);
-        if (fs.existsSync(candidate)) {
-          binPath = candidate;
-          this.log(`Claude binary found at: ${binPath}`);
+      const localConfig = this.getClaudeLocalConfig();
+      let authStatus = null;
+      try {
+        let binPath = "";
+        const exeName = process.platform === "win32" ? "claude.exe" : "claude";
+        const ext = vscode.extensions.getExtension("anthropic.claude-code");
+        if (ext) {
+          const candidate = path.join(ext.extensionPath, "resources", "native-binary", exeName);
+          if (fs.existsSync(candidate)) binPath = candidate;
         }
-      }
-      if (!binPath) {
-        const home = os.homedir();
-        for (const dir of [path.join(home, ".antigravity", "extensions"), path.join(home, ".vscode", "extensions")]) {
-          try {
-            let cmd2 = "";
-            if (process.platform === "win32") {
-              cmd2 = `powershell.exe -NoProfile -Command "Get-ChildItem -Path '${dir}' -Filter '${exeName}' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"`;
-            } else {
-              cmd2 = `find "${dir}" -name "${exeName}" -type f 2>/dev/null | head -n 1`;
+        if (!binPath) {
+          const home = os.homedir();
+          for (const dir of [path.join(home, ".antigravity", "extensions"), path.join(home, ".vscode", "extensions")]) {
+            try {
+              const cmd = process.platform === "win32" ? `powershell.exe -NoProfile -Command "Get-ChildItem -Path '${dir}' -Filter '${exeName}' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"` : `find "${dir}" -name "${exeName}" -type f 2>/dev/null | head -n 1`;
+              const { stdout } = await execWithTimeout(cmd, 6e3);
+              if (stdout?.trim()) {
+                binPath = stdout.trim();
+                break;
+              }
+            } catch {
             }
-            const { stdout: stdout2 } = await execWithTimeout(cmd2, 6e3);
-            if (stdout2 && stdout2.trim()) {
-              binPath = stdout2.trim();
-              break;
-            }
-          } catch {
           }
         }
+        if (binPath) {
+          const cmd = process.platform === "win32" ? `powershell.exe -NoProfile -Command "& '${binPath}' auth status --json"` : `"${binPath}" auth status --json`;
+          const { stdout } = await execWithTimeout(cmd, 6e3);
+          authStatus = JSON.parse(stdout.trim());
+        }
+      } catch {
       }
-      if (!binPath) {
-        this.log("Claude binary not found.");
-        return { name: "Claude Code", email: "Extension not found", tier: "N/A", quotas: [], isAuthenticated: false };
-      }
-      let cmd = "";
-      if (process.platform === "win32") {
-        cmd = `powershell.exe -NoProfile -Command "& '${binPath}' auth status --json"`;
-      } else {
-        cmd = `"${binPath}" auth status --json`;
-      }
-      const { stdout } = await execWithTimeout(cmd, 6e3);
-      const status = JSON.parse(stdout.trim());
-      if (!status.loggedIn) {
-        this.log("Claude: Not logged in.");
+      const isLoggedIn = authStatus?.loggedIn ?? !!localConfig.email;
+      const email = authStatus?.email || localConfig.email || "";
+      const tier = authStatus?.subscriptionType || localConfig.subscriptionType || "Unknown";
+      const displayName = localConfig.displayName || "Claude Code";
+      const organizationId = authStatus?.orgId || localConfig.organizationId;
+      if (!isLoggedIn) {
         return { name: "Claude Code", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
       }
-      this.log(`Claude: Logged in as ${status.email}`);
+      const sqmConfig = vscode.workspace.getConfiguration("sqm");
+      const sessionKey = sqmConfig.get("claude.sessionKey")?.trim() || "";
+      if (!sessionKey || !organizationId) {
+        return {
+          name: displayName,
+          email,
+          tier,
+          quotas: [],
+          isAuthenticated: true,
+          error: !sessionKey ? "Add sessionKey + cf_clearance in settings to see usage %" : "Missing organizationId"
+        };
+      }
+      let usageData;
+      try {
+        usageData = await this.fetchClaudeUsage(sessionKey, organizationId);
+      } catch (e) {
+        return {
+          name: displayName,
+          email,
+          tier,
+          quotas: [],
+          isAuthenticated: true,
+          error: e?.message || "Usage fetch failed"
+        };
+      }
+      const quotas = this.buildClaudeQuotas(usageData, localConfig.usagePeriod);
       return {
-        name: "Claude Code",
-        email: status.email || "",
-        tier: status.subscriptionType || "Pro",
-        quotas: [
-          { label: "Session (5hr)", remaining: 0, displayValue: "0%", resetTime: "3h", themeColor: "#FFAB40", style: "fluid", direction: "up" },
-          { label: "Weekly (7day)", remaining: 20, displayValue: "20%", resetTime: "5d", themeColor: "#FF7043", style: "fluid", direction: "up" }
-        ],
-        isAuthenticated: true
+        name: displayName,
+        email,
+        tier,
+        quotas,
+        isAuthenticated: true,
+        error: quotas.length === 0 ? "No usage data returned" : void 0
       };
     } catch (e) {
       this.log(`Claude Status error: ${e.message}`);
@@ -345,29 +486,50 @@ var QuotaService = class {
   async _fetchCodexStatusImpl() {
     this.log("Fetching Codex Status...");
     try {
-      const ext = vscode.extensions.getExtension("openai.chatgpt");
-      if (!ext) {
-        this.log("Codex extension not installed.");
-        return { name: "Codex", email: "Extension not installed", tier: "N/A", quotas: [], isAuthenticated: false };
-      }
-      this.log(`Codex extension found at: ${ext.extensionPath}`);
       const home = os.homedir();
-      const stateFile = path.join(home, ".codex", ".codex-global-state.json");
+      const authFile = path.join(home, ".codex", "auth.json");
       const configFile = path.join(home, ".codex", "config.toml");
-      if (!fs.existsSync(stateFile) && !fs.existsSync(configFile)) {
-        this.log("Codex state files not found - user not logged in.");
+      const ext = vscode.extensions.getExtension("openai.chatgpt");
+      if (!ext && !fs.existsSync(authFile)) {
+        return { name: "Codex", email: "Not installed", tier: "N/A", quotas: [], isAuthenticated: false };
+      }
+      if (!fs.existsSync(authFile)) {
         return { name: "Codex", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
       }
-      this.log("Codex: Logged in (state files found).");
+      let email = "";
+      let planType = "Free";
+      let model = "Unknown";
+      try {
+        const authData = JSON.parse(fs.readFileSync(authFile, "utf8"));
+        const idToken = authData?.tokens?.id_token;
+        if (idToken) {
+          const parts = idToken.split(".");
+          if (parts.length >= 2) {
+            const payload = Buffer.from(parts[1], "base64url").toString("utf8");
+            const claims = JSON.parse(payload);
+            email = claims.email || "";
+            const authInfo = claims["https://api.openai.com/auth"] || {};
+            planType = authInfo.chatgpt_plan_type || "free";
+          }
+        }
+      } catch {
+      }
+      try {
+        if (fs.existsSync(configFile)) {
+          const configRaw = fs.readFileSync(configFile, "utf8");
+          const modelMatch = configRaw.match(/^model\s*=\s*"([^"]+)"/m);
+          if (modelMatch) model = modelMatch[1];
+        }
+      } catch {
+      }
+      this.log(`Codex: ${email} (${planType}), model: ${model}`);
       return {
         name: "Codex",
-        email: "Logged In",
-        tier: "ChatGPT",
-        quotas: [
-          { label: "Remaining", remaining: 30, displayValue: "23", resetTime: "Stable", themeColor: "#69F0AE", style: "fluid", direction: "down" },
-          { label: "Weekly (7day)", remaining: 30, displayValue: "23", resetTime: "Mar 23", themeColor: "#00E676", style: "fluid", direction: "down" }
-        ],
-        isAuthenticated: true
+        email,
+        tier: planType.charAt(0).toUpperCase() + planType.slice(1),
+        quotas: [],
+        isAuthenticated: true,
+        error: `Model: ${model} \u2014 Usage tracking not available via API`
       };
     } catch (e) {
       this.log(`Codex Status error: ${e.message}`);
@@ -388,14 +550,18 @@ var QuotaService = class {
       if (!history[today]) history[today] = {};
       const track = (service, quotas) => {
         quotas.forEach((q) => {
-          const key = `${service}_${q.label.replace(/ \\(.+?\\)/g, "")}`;
+          const key = `${service}_${q.label.replace(/ \(.+?\)/g, "")}`;
           const isUp = q.direction === "up";
           const current = q.remaining;
           if (history[today][key] === void 0) {
-            history[today][key] = current;
+            history[today][key] = { value: current, direction: q.direction || "down" };
           } else {
-            if (isUp) history[today][key] = Math.max(history[today][key], current);
-            else history[today][key] = Math.min(history[today][key], current);
+            const entry = history[today][key];
+            if (typeof entry === "number") {
+              history[today][key] = { value: entry, direction: q.direction || "down" };
+            }
+            if (isUp) history[today][key].value = Math.max(history[today][key].value, current);
+            else history[today][key].value = Math.min(history[today][key].value, current);
           }
         });
       };
@@ -438,6 +604,10 @@ var SidebarProvider = class _SidebarProvider {
         this.updateData();
       } else if (data.type === "onAutoClickChange") {
         vscode2.commands.executeCommand("ag-manager.updateAutoClick", data.config);
+      } else if (data.type === "getSettings") {
+        this._sendSettings();
+      } else if (data.type === "saveSettings") {
+        await this._saveSettings(data.settings);
       }
     });
   }
@@ -454,6 +624,36 @@ var SidebarProvider = class _SidebarProvider {
     const data = await this._quotaService.fetchDashboard();
     setLatestData(data);
   }
+  _sendSettings() {
+    const sqm = vscode2.workspace.getConfiguration("sqm");
+    const ag = vscode2.workspace.getConfiguration("ag-manager");
+    this._view?.webview.postMessage({
+      type: "settings",
+      settings: {
+        "claude.sessionKey": sqm.get("claude.sessionKey") || "",
+        "claude.organizationId": sqm.get("claude.organizationId") || "",
+        "claude.usagePeriod": sqm.get("claude.usagePeriod") || "both",
+        "refreshInterval": sqm.get("refreshInterval") || 5,
+        "enableNotifications": sqm.get("enableNotifications") !== false,
+        "automation.enabled": ag.get("automation.enabled") !== false
+      }
+    });
+  }
+  async _saveSettings(settings) {
+    const sqm = vscode2.workspace.getConfiguration("sqm");
+    const ag = vscode2.workspace.getConfiguration("ag-manager");
+    const target = vscode2.ConfigurationTarget.Global;
+    for (const [key, value] of Object.entries(settings)) {
+      if (key.startsWith("automation.")) {
+        await ag.update(key, value, target);
+      } else {
+        await sqm.update(key, value, target);
+      }
+    }
+    this._sendSettings();
+    this.updateData();
+    vscode2.window.showInformationMessage("Settings saved!");
+  }
   _getHtmlForWebview(webview) {
     const styleUri = webview.asWebviewUri(vscode2.Uri.joinPath(this._extensionUri, "webview-ui", "style.css"));
     const scriptUri = webview.asWebviewUri(vscode2.Uri.joinPath(this._extensionUri, "webview-ui", "main.js"));
@@ -468,8 +668,12 @@ var SidebarProvider = class _SidebarProvider {
                 <div id="app">
                     <div class="header">
                         <h1>Quota Dashboard</h1>
-                        <button id="refresh-btn">Refresh</button>
+                        <div class="header-actions">
+                            <button id="settings-btn" title="Settings">&#9881;</button>
+                            <button id="refresh-btn">Refresh</button>
+                        </div>
                     </div>
+                    <div id="settings-panel" class="settings-container hidden"></div>
                     <div id="user-info"></div>
                     <div id="quota-list">
                         <p class="loading">Establishing connection...</p>
@@ -704,7 +908,7 @@ var AutomationService = class _AutomationService {
 
 // src/updater.ts
 var vscode4 = __toESM(require("vscode"));
-var https = __toESM(require("https"));
+var https2 = __toESM(require("https"));
 var REPO_OWNER = "trinhvanhao";
 var REPO_NAME = "Auto-Quota-Antigravity";
 var API_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
@@ -717,7 +921,7 @@ async function checkForUpdates(context) {
         "User-Agent": "VSCode-Auto-Quota-Antigravity-Extension"
       }
     };
-    https.get(API_URL, options, (res) => {
+    https2.get(API_URL, options, (res) => {
       let data = "";
       res.on("data", (chunk) => {
         data += chunk;
@@ -915,12 +1119,12 @@ function refreshStatusBar() {
   }
   if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length > 0) {
     const cQuota = latestQuotaData.claude.quotas[0];
-    const color = getQuotaColor(cQuota.remaining, "up");
+    const color = getQuotaColor(cQuota.remaining, cQuota.direction || "up");
     groupsText += `  Claude ${color.dot}`;
   }
   if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length > 0) {
     const cxQuota = latestQuotaData.codex.quotas[0];
-    const color = getQuotaColor(cxQuota.remaining, "down");
+    const color = getQuotaColor(cxQuota.remaining, cxQuota.direction || "down");
     groupsText += `  Codex ${color.dot}`;
   }
   statusBarItem.text = `$(dashboard)  ${groupsText || "Auto Quota Antigravity"}`;
@@ -966,14 +1170,14 @@ function checkNotifications(data) {
     quotas.forEach((q) => {
       const modelKey = `${serviceName}-${q.label}`;
       if (notifiedModels.has(modelKey)) return;
-      const isClaude = serviceName === "Claude";
+      const isUp = q.direction === "up";
       const pct = Math.round(q.remaining);
       let shouldNotify = false;
       let message = "";
-      if (isClaude) {
+      if (isUp) {
         if (pct >= 80) {
           shouldNotify = true;
-          message = `Claude [${q.label}] usage is high (${pct}%).`;
+          message = `${serviceName} [${q.label}] usage is high (${pct}%).`;
         }
       } else {
         if (pct <= 20) {
