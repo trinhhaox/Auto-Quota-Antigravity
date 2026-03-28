@@ -7,6 +7,7 @@
     let config = {
         rules: __RULES__,
         active: __STATE__,
+        authToken: __AUTH_TOKEN__,
         port: 48787,
         scanInterval: 1000
     };
@@ -25,7 +26,9 @@
                     ? `?delta=${encodeURIComponent(JSON.stringify(state.pendingStats))}`
                     : '';
 
-                const res = await fetch(`http://127.0.0.1:${p}/system/heartbeat${query}`);
+                const res = await fetch(`http://127.0.0.1:${p}/system/heartbeat${query}`, {
+                    headers: { 'Authorization': `Bearer ${config.authToken}` }
+                });
                 const remote = await res.json();
 
                 config.port = p; // Remember working port
@@ -85,12 +88,27 @@
     function logToHost(payload) {
         fetch(`http://127.0.0.1:${config.port}/system/log`, {
             method: 'POST',
+            headers: { 'Authorization': `Bearer ${config.authToken}` },
             body: JSON.stringify(payload)
         }).catch(() => { });
     }
 
-    // 4. Lifecycle
+    // 4. Lifecycle — MutationObserver for efficient DOM watching
+    let scanPending = false;
+    function scheduleScan() {
+        if (scanPending) return;
+        scanPending = true;
+        requestAnimationFrame(() => {
+            executeAutomation();
+            scanPending = false;
+        });
+    }
+
+    const observer = new MutationObserver(scheduleScan);
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Fallback interval for iframes (MutationObserver can't watch cross-origin)
+    setInterval(executeAutomation, 10000);
     setInterval(syncWithHost, 5000);
-    setInterval(executeAutomation, config.scanInterval);
-    console.log('[AG-Automation] Bridge initialized.');
+    console.log('[AG-Automation] Bridge initialized (MutationObserver mode).');
 })();

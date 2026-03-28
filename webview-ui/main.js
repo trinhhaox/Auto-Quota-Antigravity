@@ -1,6 +1,11 @@
 const vscode = acquireVsCodeApi();
 const state = vscode.getState() || {};
 
+function escapeHtml(str) {
+    if (typeof str !== 'string') return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 window.addEventListener("message", (event) => {
     const message = event.data;
     switch (message.type) {
@@ -46,10 +51,10 @@ function renderDashboard(data) {
     if (ag) {
         document.getElementById('user-info').innerHTML = `
             <div class="user-card">
-                <div class="avatar">${ag.name.charAt(0)}</div>
+                <div class="avatar">${escapeHtml(ag.name.charAt(0))}</div>
                 <div class="user-details">
-                    <div class="user-name">${ag.name}</div>
-                    <div class="user-sub">${ag.tier} • ${ag.email}</div>
+                    <div class="user-name">${escapeHtml(ag.name)}</div>
+                    <div class="user-sub">${escapeHtml(ag.tier)} &bull; ${escapeHtml(ag.email)}</div>
                 </div>
             </div>
         `;
@@ -88,20 +93,20 @@ function renderServiceGroup(title, status) {
     if (!status) { return ''; }
 
     const isAuthenticated = status.isAuthenticated !== false; // true if undefined (backward compat)
-    const infoLine = `${status.tier} • ${status.email}`;
+    const infoLine = `${escapeHtml(status.tier)} &bull; ${escapeHtml(status.email)}`;
 
     let gaugesHtml = '';
     if (status.error) {
-        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">${status.error}</p>`;
+        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">${escapeHtml(status.error)}</p>`;
     } else if (isAuthenticated && status.quotas && status.quotas.length > 0) {
         gaugesHtml = `<div class="gauge-grid">${status.quotas.map(q => createGauge(q)).join('')}</div>`;
     } else if (!isAuthenticated) {
-        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">${status.email}</p>`;
+        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">${escapeHtml(status.email)}</p>`;
     }
 
     return `
         <div class="service-group">
-            <div class="group-header">${title}</div>
+            <div class="group-header">${escapeHtml(title)}</div>
             <div class="service-info">${infoLine}</div>
             ${gaugesHtml}
         </div>
@@ -119,20 +124,20 @@ function renderAutoClick(config) {
     }
 
     const rules = [
-        { id: 'Run', label: 'Bot Chạy (Run)' },
-        { id: 'Allow', label: 'Quyền (Allow)' },
-        { id: 'Accept', label: 'Chấp nhận (Accept)' },
-        { id: 'Always Allow', label: 'Luôn cho phép' },
-        { id: 'Retry', label: 'Thử lại (Retry)' },
-        { id: 'Keep Waiting', label: 'Bỏ qua chờ' },
-        { id: 'Accept all', label: 'Duyệt hết (Accept All)' }
+        { id: 'Run', label: 'Run' },
+        { id: 'Allow', label: 'Allow' },
+        { id: 'Accept', label: 'Accept' },
+        { id: 'Always Allow', label: 'Always Allow' },
+        { id: 'Retry', label: 'Retry' },
+        { id: 'Keep Waiting', label: 'Keep Waiting' },
+        { id: 'Accept all', label: 'Accept All' }
     ];
 
     container.innerHTML = `
         <div class="section-title">Automation Suite</div>
         
         <div class="power-row">
-            <span class="power-label">Hệ thống Tự động</span>
+            <span class="power-label">Automation System</span>
             <label class="switch">
                 <input type="checkbox" id="master-power" ${config.active ? 'checked' : ''}>
                 <span class="slider"></span>
@@ -155,21 +160,14 @@ function renderAutoClick(config) {
         </div>
     `;
 
-    // Events
-    document.getElementById('master-power').addEventListener('change', (e) => {
-        vscode.postMessage({
-            type: 'onAutoClickChange',
-            config: { enabled: e.target.checked }
-        });
-    });
-
-    container.querySelectorAll('.automation-card').forEach(card => {
-        card.addEventListener('click', () => {
+    // Event delegation — single listener, no re-registration leak
+    container.onclick = function(e) {
+        const card = e.target.closest('.automation-card');
+        if (card) {
             const ruleId = card.getAttribute('data-rule');
             const rulesList = Array.isArray(config.rules) ? config.rules : [];
             let currentRules = [...rulesList];
 
-            // Visual feedback
             card.style.opacity = '0.5';
             card.style.pointerEvents = 'none';
 
@@ -183,8 +181,16 @@ function renderAutoClick(config) {
                 type: 'onAutoClickChange',
                 config: { rules: currentRules }
             });
-        });
-    });
+        }
+    };
+    container.onchange = function(e) {
+        if (e.target.id === 'master-power') {
+            vscode.postMessage({
+                type: 'onAutoClickChange',
+                config: { enabled: e.target.checked }
+            });
+        }
+    };
 }
 
 function formatTime(t) {
@@ -210,13 +216,13 @@ function createGauge(quota) {
     return `
         <div class="quota-row">
             <div class="quota-main">
-                <div class="quota-label">${label}</div>
-                <div class="quota-time">${time}</div>
+                <div class="quota-label">${escapeHtml(label)}</div>
+                <div class="quota-time">${escapeHtml(time)}</div>
                 <div class="quota-bar">
-                    <div class="quota-bar-fill" style="width: ${barWidth}%; background-color: ${quota.themeColor};"></div>
+                    <div class="quota-bar-fill" style="width: ${barWidth}%; background-color: ${escapeHtml(quota.themeColor || '')};"></div>
                 </div>
             </div>
-            <div class="quota-value">${centerText}</div>
+            <div class="quota-value">${escapeHtml(centerText)}</div>
         </div>
     `;
 }
@@ -331,12 +337,12 @@ function renderAnalytics(history) {
     }
     
     if (!history || Object.keys(history).length === 0) {
-        container.innerHTML = '<div class="section-title">Lịch sử 7 ngày</div><p class="error-msg">Chưa có dữ liệu</p>';
+        container.innerHTML = '<div class="section-title">7-Day History</div><p class="error-msg">No data yet</p>';
         return;
     }
 
     const dates = Object.keys(history).sort().slice(-7);
-    let html = '<div class="section-title">Lịch sử sử dụng (7 ngày)</div><div class="analytics-grid">';
+    let html = '<div class="section-title">Usage History (7 Days)</div><div class="analytics-grid">';
 
     dates.forEach(date => {
         const dayData = history[date];
@@ -357,8 +363,8 @@ function renderAnalytics(history) {
             const cleanModel = model.replace('AG_', '').replace('Claude_', '').replace('Codex_', '');
             
             dayHtml += `
-            <div class="bar-wrapper" title="${cleanModel}: ${Math.round(usedPct)}% used">
-                <div class="bar" style="height: ${usedPct}%; background-color: ${color}"></div>
+            <div class="bar-wrapper" title="${escapeHtml(cleanModel)}: ${Math.round(usedPct)}% used">
+                <div class="bar" style="height: ${usedPct}%; background-color: ${escapeHtml(color)}"></div>
             </div>`;
         });
         

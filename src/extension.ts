@@ -3,34 +3,72 @@ import { QuotaService } from './quotaService';
 import { SidebarProvider } from './sidebarProvider';
 import { AutomationService } from './automationService';
 import { checkForUpdates } from './updater';
+import { DashboardData, AutoClickDiagnostics, ModelGroup, QuotaInfo, ClaudeSecrets } from './types';
+import { HistoryService } from './historyService';
+import { formatTime, getQuotaColor } from './utils';
 
 let statusBarItem: vscode.StatusBarItem;
-let latestQuotaData: any = null;
-let latestAutoStatus: any = null; // [ADDED] Track autoStatus diff
+let latestQuotaData: DashboardData | null = null;
+let latestDataHash: string = '';
+let latestAutoHash: string = '';
 let globalSidebarProvider: SidebarProvider | null = null;
-export let globalContext: vscode.ExtensionContext | null = null;
 let automationService: AutomationService | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
 const notifiedModels = new Set<string>();
 
-const GROUPS = [
-    { id: 'g1', title: 'GEMINI 3.1 PRO', models: ['Gemini 3.1 Pro (High)', 'Gemini 3.1 Pro (Low)'] },
-    { id: 'g2', title: 'GEMINI 3 FLASH', models: ['Gemini 3 Flash'] },
-    { id: 'g3', title: 'CLAUDE/GPT', models: ['Claude Sonnet 4.6 (Thinking)', 'Claude Opus 4.6 (Thinking)', 'GPT-OSS 120B (Medium)'] }
-];
+function autoDetectGroups(quotas: QuotaInfo[]): ModelGroup[] {
+    const groupMap = new Map<string, string[]>();
+    for (const q of quotas) {
+        // Extract prefix: "Gemini 3.1 Pro (High)" -> "Gemini 3.1 Pro"
+        // "Claude Sonnet 4.6 (Thinking)" -> "Claude/GPT" group
+        const label = q.label;
+        let groupKey: string;
+        if (label.startsWith('Gemini')) {
+            // Group by "Gemini X.Y Type" (e.g. "Gemini 3.1 Pro", "Gemini 3 Flash")
+            const match = label.match(/^(Gemini [\d.]+ \w+)/);
+            groupKey = match ? match[1] : 'Gemini';
+        } else {
+            // Group all Claude/GPT/other together
+            groupKey = 'Claude/GPT';
+        }
+        if (!groupMap.has(groupKey)) groupMap.set(groupKey, []);
+        groupMap.get(groupKey)!.push(label);
+    }
+    return Array.from(groupMap.entries()).map(([key, models], i) => ({
+        id: `g${i}`,
+        title: key.toUpperCase(),
+        models
+    }));
+}
 
 export function activate(context: vscode.ExtensionContext) {
-    globalContext = context;
-    const quotaService = new QuotaService();
-    globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService);
-    automationService = new AutomationService(context);
+    const logger = vscode.window.createOutputChannel('Auto Quota Antigravity');
+    context.subscriptions.push(logger);
+
+    const historyService = new HistoryService(context.globalState);
+    const quotaService = new QuotaService(logger);
+    quotaService.setHistoryService(historyService);
+    globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService, context.secrets);
+    automationService = new AutomationService(context, logger);
+
+    // Migrate old plaintext credentials to SecretStorage (one-time)
+    migrateSecretsIfNeeded(context).then(secrets => {
+        quotaService.setSecrets(secrets);
+    });
+
+    // Listen for secret changes to update quotaService
+    context.subscriptions.push(
+        context.secrets.onDidChange(async () => {
+            const secrets = await loadSecrets(context.secrets);
+            quotaService.setSecrets(secrets);
+        })
+    );
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
     );
 
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    // Click opens the sidebar focus
     statusBarItem.command = "sqm.sidebar.focus";
     statusBarItem.text = "$(dashboard) Auto Quota Antigravity";
     statusBarItem.show();
@@ -46,8 +84,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand("ag-manager.updateAutoClick", async (config) => {
             if (automationService) {
                 await automationService.patchSettings(config);
-                // Force UI update to reflect new state immediately
-                setLatestData(latestQuotaData);
+                if (latestQuotaData) setLatestData(latestQuotaData);
             }
         })
     );
@@ -71,30 +108,7 @@ export function activate(context: vscode.ExtensionContext) {
     }, 10000);
 }
 
-function getQuotaColor(pct: number, direction: 'up' | 'down' = 'down'): { hex: string, dot: string } {
-    if (direction === 'up') {
-        // Counting UP (Usage) - Orange low, Red high
-        if (pct < 80) return { hex: '#FFAB40', dot: '🟠' };
-        return { hex: '#ef4444', dot: '🔴' };
-    } else {
-        // Counting DOWN (Remaining) - Green high, Red low
-        if (pct > 50) return { hex: '#10b981', dot: '🟢' };
-        if (pct > 20) return { hex: '#f59e0b', dot: '🟡' };
-        return { hex: '#ef4444', dot: '🔴' };
-    }
-}
-
-function formatTime(t: string): string {
-    const hMatch = t.match(/(\d+)h/);
-    const mMatch = t.match(/(\d+)m/);
-    if (!hMatch && !mMatch) return t;
-    let h = hMatch ? parseInt(hMatch[1]) : 0;
-    let m = mMatch ? parseInt(mMatch[1]) : 0;
-    if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h ${m}m`;
-    return `0d ${h}h ${m}m`;
-}
-
-function buildTooltipSVG(data: any): string {
+function buildTooltipSVG(data: DashboardData): string {
     const rowHeight = 30;
     const groupHeaderHeight = 22;
     const padding = 15;
@@ -103,15 +117,14 @@ function buildTooltipSVG(data: any): string {
     let contentHtml = '';
     let currentY = padding + 5;
 
-    // Helper to render a group section
-    const renderGroupSection = (title: string, quotas: any[]) => {
+    const renderGroupSection = (title: string, quotas: QuotaInfo[]) => {
         if (!quotas || quotas.length === 0) return;
 
         // Group Header
         contentHtml += `<text x="${padding}" y="${currentY + 12}" font-family="sans-serif" font-size="10" font-weight="800" fill="#4B5563" text-transform="uppercase">${title}</text>`;
         currentY += groupHeaderHeight;
 
-        quotas.forEach((q: any) => {
+        quotas.forEach((q) => {
             const pct = Math.round(q.remaining);
             const color = getQuotaColor(pct, q.direction || 'down');
             const time = formatTime(q.resetTime);
@@ -165,8 +178,9 @@ function buildTooltipSVG(data: any): string {
 
     // Render sections for each service
     if (data.antigravity?.quotas) {
-        GROUPS.forEach(group => {
-            const members = data.antigravity.quotas.filter((q: any) => group.models.includes(q.label));
+        const groups = autoDetectGroups(data.antigravity.quotas);
+        groups.forEach(group => {
+            const members = data.antigravity!.quotas.filter((q) => group.models.includes(q.label));
             renderGroupSection(group.title, members);
         });
     }
@@ -194,15 +208,16 @@ function refreshStatusBar() {
     // Status bar text - Sum up or aggregate from all services
     let groupsText = "";
 
-    // 1. Antigravity Groups
+    // 1. Antigravity Groups (auto-detected)
     if (latestQuotaData.antigravity?.quotas) {
-        groupsText += GROUPS.map(g => {
-            const members = latestQuotaData.antigravity.quotas.filter((q: any) => g.models.includes(q.label));
+        const groups = autoDetectGroups(latestQuotaData.antigravity.quotas);
+        groupsText += groups.map(g => {
+            const members = latestQuotaData!.antigravity!.quotas.filter((q) => g.models.includes(q.label));
             if (members.length === 0) return '';
-            const avg = members.reduce((acc: number, curr: any) => acc + curr.remaining, 0) / members.length;
-            const short = g.id === 'g1' ? 'Pro' : (g.id === 'g2' ? 'Flash' : 'C/G');
+            const avg = members.reduce((acc, curr) => acc + curr.remaining, 0) / members.length;
+            const shortName = g.title.replace('GEMINI ', 'G').replace(' PRO', 'P').replace(' FLASH', 'F').split('/')[0];
             const dot = avg > 50 ? '🟢' : (avg > 20 ? '🟡' : '🔴');
-            return `${dot} ${short} ${Math.round(avg)}%`;
+            return `${dot} ${shortName} ${Math.round(avg)}%`;
         }).filter(t => t !== '').join('  |  ');
     }
 
@@ -234,22 +249,22 @@ function refreshStatusBar() {
     statusBarItem.tooltip = tooltip;
 }
 
-export function setLatestData(data: any) {
-    const autoStatus = automationService ? automationService.dumpDiagnostics() : {};
+export function setLatestData(data: DashboardData) {
+    const autoStatus = automationService?.dumpDiagnostics() ?? null;
     const dataStr = JSON.stringify(data);
     const autoStr = JSON.stringify(autoStatus);
-    
-    if (latestQuotaData && JSON.stringify(latestQuotaData) === dataStr &&
-        latestAutoStatus && JSON.stringify(latestAutoStatus) === autoStr) {
-        return; // No differences, skip processing
+
+    if (dataStr === latestDataHash && autoStr === latestAutoHash) {
+        return;
     }
 
     latestQuotaData = data;
-    latestAutoStatus = autoStatus;
-    
+    latestDataHash = dataStr;
+    latestAutoHash = autoStr;
+
     refreshStatusBar();
     if (globalSidebarProvider && data) {
-        globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus });
+        globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus ?? undefined });
     }
     // [V10] Check for low quotas
     checkNotifications(data);
@@ -266,44 +281,37 @@ function startAutoRefresh() {
     }, intervalMins * 60 * 1000);
 }
 
-function checkNotifications(data: any) {
+function checkNotifications(data: DashboardData) {
     const config = vscode.workspace.getConfiguration("sqm");
     if (!config.get<boolean>("enableNotifications")) return;
 
-    const checkQuota = (serviceName: string, quotas: any[]) => {
+    const checkQuota = (serviceName: string, quotas: QuotaInfo[]) => {
         if (!quotas) return;
         quotas.forEach(q => {
             const modelKey = `${serviceName}-${q.label}`;
-            if (notifiedModels.has(modelKey)) return;
-
             const isUp = q.direction === 'up';
             const pct = Math.round(q.remaining);
 
-            let shouldNotify = false;
-            let message = "";
+            const isUnhealthy = isUp ? pct >= 80 : pct <= 20;
 
-            if (isUp) {
-                // Counting UP (usage) - alert when high
-                if (pct >= 80) {
-                    shouldNotify = true;
-                    message = `${serviceName} [${q.label}] usage is high (${pct}%).`;
-                }
-            } else {
-                // Counting DOWN (remaining) - alert when low
-                if (pct <= 20) {
-                    shouldNotify = true;
-                    message = `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
-                }
+            if (!isUnhealthy) {
+                // Quota recovered — allow re-notification if it drops again
+                notifiedModels.delete(modelKey);
+                return;
             }
 
-            if (shouldNotify) {
-                vscode.window.showWarningMessage(message, "Dashboard").then(selection => {
-                    if (selection === "Dashboard") {
-                        vscode.commands.executeCommand("sqm.sidebar.focus");
-                    }
-                });
-                notifiedModels.add(modelKey);
-            }
+            if (notifiedModels.has(modelKey)) return;
+
+            const message = isUp
+                ? `${serviceName} [${q.label}] usage is high (${pct}%).`
+                : `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
+
+            vscode.window.showWarningMessage(message, "Dashboard").then(selection => {
+                if (selection === "Dashboard") {
+                    vscode.commands.executeCommand("sqm.sidebar.focus");
+                }
+            });
+            notifiedModels.add(modelKey);
         });
     };
 
@@ -312,4 +320,39 @@ function checkNotifications(data: any) {
     if (data.codex?.quotas) checkQuota("Codex", data.codex.quotas);
 }
 
-export function deactivate() { }
+async function loadSecrets(secrets: vscode.SecretStorage): Promise<ClaudeSecrets> {
+    const sessionKey = (await secrets.get('claude.sessionKey')) || '';
+    const cfClearance = (await secrets.get('claude.cfClearance')) || '';
+    return { sessionKey, cfClearance };
+}
+
+async function migrateSecretsIfNeeded(context: vscode.ExtensionContext): Promise<ClaudeSecrets> {
+    const secrets = context.secrets;
+    const config = vscode.workspace.getConfiguration('sqm');
+
+    // Migrate from plaintext settings to SecretStorage (one-time)
+    const oldSessionKey = config.get<string>('claude.sessionKey')?.trim() || '';
+    const oldCfClearance = config.get<string>('claude.cfClearance')?.trim() || '';
+
+    if (oldSessionKey) {
+        await secrets.store('claude.sessionKey', oldSessionKey);
+        await config.update('claude.sessionKey', undefined, vscode.ConfigurationTarget.Global);
+    }
+    if (oldCfClearance) {
+        await secrets.store('claude.cfClearance', oldCfClearance);
+        await config.update('claude.cfClearance', undefined, vscode.ConfigurationTarget.Global);
+    }
+
+    return loadSecrets(secrets);
+}
+
+export function deactivate() {
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+    }
+    if (automationService) {
+        automationService.dispose();
+        automationService = null;
+    }
+}

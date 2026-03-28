@@ -32,7 +32,6 @@ var extension_exports = {};
 __export(extension_exports, {
   activate: () => activate,
   deactivate: () => deactivate,
-  globalContext: () => globalContext,
   setLatestData: () => setLatestData
 });
 module.exports = __toCommonJS(extension_exports);
@@ -50,11 +49,13 @@ var path = __toESM(require("path"));
 var execAsync = (0, import_util.promisify)(import_child_process.exec);
 async function execWithTimeout(command, timeoutMs = 8e3) {
   return new Promise((resolve, reject) => {
+    let child;
     const timer = setTimeout(() => {
+      child?.kill();
       reject(new Error(`Command timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     const options = process.platform === "win32" ? { shell: "powershell.exe" } : {};
-    (0, import_child_process.exec)(command, options, (error, stdout, stderr) => {
+    child = (0, import_child_process.exec)(command, options, (error, stdout, stderr) => {
       clearTimeout(timer);
       if (error) {
         error.stdout = stdout;
@@ -70,17 +71,25 @@ var API_PATH = "/exa.language_server_pb.LanguageServerService/GetUserStatus";
 var QuotaService = class {
   serverInfo = null;
   discovering = null;
-  // [ADDED] Cache state
   cachedClaude = null;
   claudeLastFetch = 0;
   cachedCodex = null;
   codexLastFetch = 0;
   CACHE_TTL = 6e4;
   // 60 seconds
-  // [ADDED] Optional logger
+  _secrets = { sessionKey: "", cfClearance: "" };
+  _historyService;
   logger;
   constructor(logger) {
     this.logger = logger;
+  }
+  setHistoryService(historyService) {
+    this._historyService = historyService;
+  }
+  setSecrets(secrets) {
+    this._secrets = secrets;
+    this.cachedClaude = null;
+    this.claudeLastFetch = 0;
   }
   log(msg) {
     this.logger?.appendLine(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] [QuotaService] ${msg}`);
@@ -105,14 +114,13 @@ var QuotaService = class {
           displayName = oauth.displayName || "";
         }
       }
-    } catch {
+    } catch (e) {
+      this.log(`Failed to read ~/.claude.json: ${e?.message}`);
     }
     const usagePeriod = sqmConfig.get("claude.usagePeriod") || "both";
     return { organizationId, email, displayName, subscriptionType, usagePeriod };
   }
-  async fetchClaudeUsage(sessionKey, organizationId) {
-    const sqmConfig = vscode.workspace.getConfiguration("sqm");
-    const cfClearance = sqmConfig.get("claude.cfClearance")?.trim() || "";
+  async fetchClaudeUsage(sessionKey, organizationId, cfClearance = "") {
     let cookieStr = `sessionKey=${sessionKey}; lastActiveOrg=${organizationId}`;
     if (cfClearance) {
       cookieStr += `; cf_clearance=${cfClearance}`;
@@ -235,7 +243,8 @@ var QuotaService = class {
         try {
           const parsed = JSON.parse(stdout.trim());
           processes = Array.isArray(parsed) ? parsed : [parsed];
-        } catch {
+        } catch (e) {
+          this.log(`Process discovery parse error: ${e?.message}`);
           return false;
         }
         for (const proc of processes) {
@@ -272,7 +281,8 @@ var QuotaService = class {
         const { stdout } = await execAsync(cmd);
         return stdout.trim().split(/\r?\n/).map((p) => parseInt(p.trim())).filter((p) => !isNaN(p) && p > 1024);
       }
-    } catch {
+    } catch (e) {
+      this.log(`getListeningPorts failed for PID ${pid}: ${e?.message}`);
       return [];
     }
   }
@@ -415,7 +425,8 @@ var QuotaService = class {
                 binPath = stdout.trim();
                 break;
               }
-            } catch {
+            } catch (e) {
+              this.log(`Claude binary search in ${dir}: ${e?.message}`);
             }
           }
         }
@@ -424,7 +435,8 @@ var QuotaService = class {
           const { stdout } = await execWithTimeout(cmd, 6e3);
           authStatus = JSON.parse(stdout.trim());
         }
-      } catch {
+      } catch (e) {
+        this.log(`Claude CLI auth status failed: ${e?.message}`);
       }
       const isLoggedIn = authStatus?.loggedIn ?? !!localConfig.email;
       const email = authStatus?.email || localConfig.email || "";
@@ -434,8 +446,8 @@ var QuotaService = class {
       if (!isLoggedIn) {
         return { name: "Claude Code", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
       }
-      const sqmConfig = vscode.workspace.getConfiguration("sqm");
-      const sessionKey = sqmConfig.get("claude.sessionKey")?.trim() || "";
+      const sessionKey = this._secrets.sessionKey;
+      const cfClearance = this._secrets.cfClearance;
       if (!sessionKey || !organizationId) {
         return {
           name: displayName,
@@ -448,7 +460,7 @@ var QuotaService = class {
       }
       let usageData;
       try {
-        usageData = await this.fetchClaudeUsage(sessionKey, organizationId);
+        usageData = await this.fetchClaudeUsage(sessionKey, organizationId, cfClearance);
       } catch (e) {
         return {
           name: displayName,
@@ -512,7 +524,8 @@ var QuotaService = class {
             planType = authInfo.chatgpt_plan_type || "free";
           }
         }
-      } catch {
+      } catch (e) {
+        this.log(`Codex JWT decode failed: ${e?.message}`);
       }
       try {
         if (fs.existsSync(configFile)) {
@@ -520,7 +533,8 @@ var QuotaService = class {
           const modelMatch = configRaw.match(/^model\s*=\s*"([^"]+)"/m);
           if (modelMatch) model = modelMatch[1];
         }
-      } catch {
+      } catch (e) {
+        this.log(`Codex config read failed: ${e?.message}`);
       }
       this.log(`Codex: ${email} (${planType}), model: ${model}`);
       return {
@@ -536,55 +550,34 @@ var QuotaService = class {
       return { name: "Codex", email: "Check failed", tier: "Error", quotas: [], isAuthenticated: false, error: e.message };
     }
   }
-  // ─── [ADDED] Combined dashboard fetch ────────────────────────────────────
   async fetchDashboard() {
     const [antigravity, claude, codex] = await Promise.all([
       this.fetchStatus(),
       this.fetchClaudeStatus(),
       this.fetchCodexStatus()
     ]);
-    let history = {};
-    if (globalContext) {
-      history = globalContext.globalState.get("quota_history", {});
-      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-      if (!history[today]) history[today] = {};
-      const track = (service, quotas) => {
-        quotas.forEach((q) => {
-          const key = `${service}_${q.label.replace(/ \(.+?\)/g, "")}`;
-          const isUp = q.direction === "up";
-          const current = q.remaining;
-          if (history[today][key] === void 0) {
-            history[today][key] = { value: current, direction: q.direction || "down" };
-          } else {
-            const entry = history[today][key];
-            if (typeof entry === "number") {
-              history[today][key] = { value: entry, direction: q.direction || "down" };
-            }
-            if (isUp) history[today][key].value = Math.max(history[today][key].value, current);
-            else history[today][key].value = Math.min(history[today][key].value, current);
-          }
-        });
-      };
-      if (antigravity?.quotas) track("AG", antigravity.quotas);
-      if (claude?.quotas) track("Claude", claude.quotas);
-      if (codex?.quotas) track("Codex", codex.quotas);
-      const keys = Object.keys(history).sort();
-      if (keys.length > 7) {
-        const toRemove = keys.slice(0, keys.length - 7);
-        toRemove.forEach((k) => delete history[k]);
-      }
-      globalContext.globalState.update("quota_history", history);
+    if (this._historyService) {
+      if (antigravity?.quotas) this._historyService.track("AG", antigravity.quotas);
+      if (claude?.quotas) this._historyService.track("Claude", claude.quotas);
+      if (codex?.quotas) this._historyService.track("Codex", codex.quotas);
     }
+    const history = this._historyService?.getHistory() ?? {};
     return { antigravity, claude, codex, history };
   }
 };
 
 // src/sidebarProvider.ts
 var vscode2 = __toESM(require("vscode"));
+var crypto = __toESM(require("crypto"));
+function getNonce() {
+  return crypto.randomBytes(16).toString("hex");
+}
+var SECRET_KEYS = ["claude.sessionKey", "claude.cfClearance"];
 var SidebarProvider = class _SidebarProvider {
-  constructor(_extensionUri, _quotaService) {
+  constructor(_extensionUri, _quotaService, _secrets) {
     this._extensionUri = _extensionUri;
     this._quotaService = _quotaService;
+    this._secrets = _secrets;
   }
   _view;
   static _latestData = null;
@@ -605,7 +598,7 @@ var SidebarProvider = class _SidebarProvider {
       } else if (data.type === "onAutoClickChange") {
         vscode2.commands.executeCommand("ag-manager.updateAutoClick", data.config);
       } else if (data.type === "getSettings") {
-        this._sendSettings();
+        await this._sendSettings();
       } else if (data.type === "saveSettings") {
         await this._saveSettings(data.settings);
       }
@@ -624,14 +617,16 @@ var SidebarProvider = class _SidebarProvider {
     const data = await this._quotaService.fetchDashboard();
     setLatestData(data);
   }
-  _sendSettings() {
+  async _sendSettings() {
     const sqm = vscode2.workspace.getConfiguration("sqm");
     const ag = vscode2.workspace.getConfiguration("ag-manager");
+    const sessionKey = await this._secrets.get("claude.sessionKey") || "";
+    const cfClearance = await this._secrets.get("claude.cfClearance") || "";
     this._view?.webview.postMessage({
       type: "settings",
       settings: {
-        "claude.sessionKey": sqm.get("claude.sessionKey") || "",
-        "claude.cfClearance": sqm.get("claude.cfClearance") || "",
+        "claude.sessionKey": sessionKey,
+        "claude.cfClearance": cfClearance,
         "claude.organizationId": sqm.get("claude.organizationId") || "",
         "claude.usagePeriod": sqm.get("claude.usagePeriod") || "both",
         "refreshInterval": sqm.get("refreshInterval") || 5,
@@ -645,24 +640,28 @@ var SidebarProvider = class _SidebarProvider {
     const ag = vscode2.workspace.getConfiguration("ag-manager");
     const target = vscode2.ConfigurationTarget.Global;
     for (const [key, value] of Object.entries(settings)) {
-      if (key.startsWith("automation.")) {
+      if (SECRET_KEYS.includes(key)) {
+        await this._secrets.store(key, String(value));
+      } else if (key.startsWith("automation.")) {
         await ag.update(key, value, target);
       } else {
         await sqm.update(key, value, target);
       }
     }
-    this._sendSettings();
+    await this._sendSettings();
     this.updateData();
     vscode2.window.showInformationMessage("Settings saved!");
   }
   _getHtmlForWebview(webview) {
     const styleUri = webview.asWebviewUri(vscode2.Uri.joinPath(this._extensionUri, "webview-ui", "style.css"));
     const scriptUri = webview.asWebviewUri(vscode2.Uri.joinPath(this._extensionUri, "webview-ui", "main.js"));
+    const nonce = getNonce();
     return `<!DOCTYPE html>
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
                 <link href="${styleUri}" rel="stylesheet">
             </head>
             <body>
@@ -680,7 +679,7 @@ var SidebarProvider = class _SidebarProvider {
                         <p class="loading">Establishing connection...</p>
                     </div>
                 </div>
-                <script src="${scriptUri}"></script>
+                <script nonce="${nonce}" src="${scriptUri}"></script>
             </body>
             </html>`;
   }
@@ -691,7 +690,7 @@ var vscode3 = __toESM(require("vscode"));
 var fs2 = __toESM(require("fs"));
 var path2 = __toESM(require("path"));
 var os2 = __toESM(require("os"));
-var crypto = __toESM(require("crypto"));
+var crypto2 = __toESM(require("crypto"));
 var import_child_process2 = require("child_process");
 var http2 = __toESM(require("http"));
 var url = __toESM(require("url"));
@@ -700,16 +699,22 @@ var AutomationService = class _AutomationService {
   _context;
   _server = null;
   _port = 0;
+  _logger;
+  _authToken = crypto2.randomBytes(32).toString("hex");
   // Automation States
   _isActive = true;
   _rules = ["Run", "Allow", "Accept", "Always Allow", "Keep Waiting", "Retry", "Continue", "Allow Once", "Accept all"];
   _metrics = {};
   _history = [];
   _config = { scanDelay: 1e3, restPeriod: 7e3 };
-  constructor(context) {
+  constructor(context, logger) {
     this._context = context;
+    this._logger = logger;
     this.syncState();
     this.boot();
+  }
+  log(msg) {
+    this._logger?.appendLine(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] [Automation] ${msg}`);
   }
   syncState() {
     const store = vscode3.workspace.getConfiguration("ag-manager.automation");
@@ -722,8 +727,55 @@ var AutomationService = class _AutomationService {
     this.launchBridge();
     this.initSystemWatcher();
     if (!this.verifyInjection()) {
-      this.deployBridgeScript();
+      this.requestConsentAndDeploy();
     }
+  }
+  async requestConsentAndDeploy() {
+    const consented = this._context.globalState.get("automation_consent", false);
+    if (consented) {
+      this.deployBridgeScript();
+      return;
+    }
+    const choice = await vscode3.window.showWarningMessage(
+      "AG Manager Automation needs to inject a script into VS Code workbench to enable auto-click. This modifies VS Code internal files. Continue?",
+      "Allow",
+      "Deny"
+    );
+    if (choice === "Allow") {
+      await this._context.globalState.update("automation_consent", true);
+      this.deployBridgeScript();
+    } else {
+      this.log("User denied automation injection consent");
+    }
+  }
+  removeBridgeScript() {
+    const target = this.getTargetFile();
+    if (!target) return;
+    try {
+      let html = fs2.readFileSync(target, "utf8");
+      const startTag = `<!-- ${_AutomationService.SCRIPT_TAG_ID}-START -->`;
+      const endTag = `<!-- ${_AutomationService.SCRIPT_TAG_ID}-END -->`;
+      const startIdx = html.indexOf(startTag);
+      const endIdx = html.indexOf(endTag);
+      if (startIdx !== -1 && endIdx !== -1) {
+        html = html.substring(0, startIdx) + html.substring(endIdx + endTag.length);
+        html = html.replace(/\n\s*\n/g, "\n");
+        this.writeSafe(target, html);
+        this.recalculateHashes();
+        this.log("Bridge script removed from workbench.html");
+      }
+      const dir = path2.dirname(target);
+      const bridgeFile = path2.join(dir, "ag-automation-bridge.js");
+      if (fs2.existsSync(bridgeFile)) {
+        fs2.unlinkSync(bridgeFile);
+      }
+    } catch (err) {
+      this.log(`Failed to remove bridge script: ${err.message}`);
+    }
+  }
+  dispose() {
+    this._server?.close();
+    this._server = null;
   }
   async patchSettings(patch) {
     if (patch.enabled !== void 0) this._isActive = patch.enabled;
@@ -747,8 +799,15 @@ var AutomationService = class _AutomationService {
   }
   launchBridge() {
     this._server = http2.createServer((req, res) => {
-      res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Content-Type", "application/json");
+      const authHeader = req.headers["authorization"] || "";
+      const queryToken = url.parse(req.url || "", true).query?.token;
+      const token = authHeader.replace("Bearer ", "") || queryToken || "";
+      if (token !== this._authToken) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
       const endpoint = url.parse(req.url || "", true);
       if (endpoint.pathname === "/system/heartbeat") {
         if (endpoint.query?.delta) {
@@ -791,11 +850,21 @@ var AutomationService = class _AutomationService {
       res.end();
     });
     const bind = (p) => {
-      if (p > 48850) return;
+      if (p > 48850) {
+        this.log("Failed to bind bridge server: all ports 48787-48850 in use");
+        vscode3.window.showWarningMessage("AG Automation: Could not start bridge server \u2014 all ports in use.");
+        return;
+      }
       this._server?.listen(p, "127.0.0.1", () => {
         this._port = p;
-        console.log(`[Automation] Bridge active on port ${p}`);
-      }).on("error", (e) => e.code === "EADDRINUSE" ? bind(p + 1) : null);
+        this.log(`Bridge active on port ${p}`);
+      }).on("error", (e) => {
+        if (e.code === "EADDRINUSE") {
+          bind(p + 1);
+        } else {
+          this.log(`Bridge bind error on port ${p}: ${e.message}`);
+        }
+      });
     };
     bind(48787);
   }
@@ -861,6 +930,7 @@ var AutomationService = class _AutomationService {
       let code = fs2.readFileSync(src, "utf8");
       code = code.replace("__RULES__", JSON.stringify(this._rules));
       code = code.replace("__STATE__", String(this._isActive));
+      code = code.replace("__AUTH_TOKEN__", JSON.stringify(this._authToken));
       const finalScriptPath = path2.join(dir, "ag-automation-bridge.js");
       this.writeSafe(finalScriptPath, code);
       let html = fs2.readFileSync(target, "utf8");
@@ -874,19 +944,26 @@ var AutomationService = class _AutomationService {
       }
       this.recalculateHashes();
     } catch (err) {
-      console.error("[Automation] Deploy failed:", err.message);
+      this.log(`Deploy failed: ${err.message}`);
+      vscode3.window.showErrorMessage(`AG Automation: Failed to deploy bridge script \u2014 ${err.message}`);
     }
   }
   writeSafe(p, c) {
     try {
       fs2.writeFileSync(p, c, "utf8");
     } catch (e) {
-      if (process.platform === "win32") throw new Error("Y\xEAu c\u1EA7u Administrator \u0111\u1EC3 c\xE0i \u0111\u1EB7t t\xEDnh n\u0103ng t\u1EF1 \u0111\u1ED9ng.");
+      if (process.platform === "win32") throw new Error("Administrator privileges required to install automation.");
       const tmp = path2.join(os2.tmpdir(), `ag_tmp_${Date.now()}`);
       fs2.writeFileSync(tmp, c);
-      const cmd = process.platform === "darwin" ? `osascript -e 'do shell script "cp ${tmp} ${p}" with administrator privileges'` : `pkexec cp ${tmp} ${p}`;
-      (0, import_child_process2.execSync)(cmd);
-      fs2.unlinkSync(tmp);
+      try {
+        const cmd = process.platform === "darwin" ? `osascript -e 'do shell script "cp ${tmp} ${p}" with administrator privileges'` : `pkexec cp ${tmp} ${p}`;
+        (0, import_child_process2.execSync)(cmd);
+      } finally {
+        try {
+          fs2.unlinkSync(tmp);
+        } catch {
+        }
+      }
     }
   }
   recalculateHashes() {
@@ -897,12 +974,13 @@ var AutomationService = class _AutomationService {
       Object.keys(data.checksums).forEach((k) => {
         const fullPath = path2.join(vscode3.env.appRoot, "out", k.split("/").join(path2.sep));
         if (fs2.existsSync(fullPath)) {
-          const hash = crypto.createHash("sha256").update(fs2.readFileSync(fullPath)).digest("base64").replace(/=+$/, "");
+          const hash = crypto2.createHash("sha256").update(fs2.readFileSync(fullPath)).digest("base64").replace(/=+$/, "");
           data.checksums[k] = hash;
         }
       });
       this.writeSafe(pJson, JSON.stringify(data, null, "	"));
     } catch (e) {
+      this.log(`Hash recalculation failed: ${e?.message}`);
     }
   }
 };
@@ -969,25 +1047,106 @@ async function showUpdateNotification(newVersion, url2) {
   }
 }
 
+// src/historyService.ts
+var HistoryService = class {
+  constructor(_globalState) {
+    this._globalState = _globalState;
+  }
+  track(service, quotas) {
+    const history = this.getHistory();
+    const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+    if (!history[today]) history[today] = {};
+    quotas.forEach((q) => {
+      const key = `${service}_${q.label.replace(/ \(.+?\)/g, "")}`;
+      const isUp = q.direction === "up";
+      const current = q.remaining;
+      if (history[today][key] === void 0) {
+        history[today][key] = { value: current, direction: q.direction || "down" };
+      } else {
+        const entry = history[today][key];
+        let normalized = typeof entry === "number" ? { value: entry, direction: q.direction || "down" } : entry;
+        normalized.value = isUp ? Math.max(normalized.value, current) : Math.min(normalized.value, current);
+        history[today][key] = normalized;
+      }
+    });
+    const keys = Object.keys(history).sort();
+    if (keys.length > 7) {
+      keys.slice(0, keys.length - 7).forEach((k) => delete history[k]);
+    }
+    this._globalState.update("quota_history", history);
+  }
+  getHistory() {
+    return this._globalState.get("quota_history", {}) ?? {};
+  }
+};
+
+// src/utils.ts
+function formatTime(t) {
+  const hMatch = t.match(/(\d+)h/);
+  const mMatch = t.match(/(\d+)m/);
+  if (!hMatch && !mMatch) return t;
+  let h = hMatch ? parseInt(hMatch[1]) : 0;
+  let m = mMatch ? parseInt(mMatch[1]) : 0;
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h ${m}m`;
+  return `0d ${h}h ${m}m`;
+}
+function getQuotaColor(pct, direction = "down") {
+  if (direction === "up") {
+    if (pct < 80) return { hex: "#FFAB40", dot: "\u{1F7E0}" };
+    return { hex: "#ef4444", dot: "\u{1F534}" };
+  } else {
+    if (pct > 50) return { hex: "#10b981", dot: "\u{1F7E2}" };
+    if (pct > 20) return { hex: "#f59e0b", dot: "\u{1F7E1}" };
+    return { hex: "#ef4444", dot: "\u{1F534}" };
+  }
+}
+
 // src/extension.ts
 var statusBarItem;
 var latestQuotaData = null;
-var latestAutoStatus = null;
+var latestDataHash = "";
+var latestAutoHash = "";
 var globalSidebarProvider = null;
-var globalContext = null;
 var automationService = null;
 var refreshTimer = null;
 var notifiedModels = /* @__PURE__ */ new Set();
-var GROUPS = [
-  { id: "g1", title: "GEMINI 3.1 PRO", models: ["Gemini 3.1 Pro (High)", "Gemini 3.1 Pro (Low)"] },
-  { id: "g2", title: "GEMINI 3 FLASH", models: ["Gemini 3 Flash"] },
-  { id: "g3", title: "CLAUDE/GPT", models: ["Claude Sonnet 4.6 (Thinking)", "Claude Opus 4.6 (Thinking)", "GPT-OSS 120B (Medium)"] }
-];
+function autoDetectGroups(quotas) {
+  const groupMap = /* @__PURE__ */ new Map();
+  for (const q of quotas) {
+    const label = q.label;
+    let groupKey;
+    if (label.startsWith("Gemini")) {
+      const match = label.match(/^(Gemini [\d.]+ \w+)/);
+      groupKey = match ? match[1] : "Gemini";
+    } else {
+      groupKey = "Claude/GPT";
+    }
+    if (!groupMap.has(groupKey)) groupMap.set(groupKey, []);
+    groupMap.get(groupKey).push(label);
+  }
+  return Array.from(groupMap.entries()).map(([key, models], i) => ({
+    id: `g${i}`,
+    title: key.toUpperCase(),
+    models
+  }));
+}
 function activate(context) {
-  globalContext = context;
-  const quotaService = new QuotaService();
-  globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService);
-  automationService = new AutomationService(context);
+  const logger = vscode5.window.createOutputChannel("Auto Quota Antigravity");
+  context.subscriptions.push(logger);
+  const historyService = new HistoryService(context.globalState);
+  const quotaService = new QuotaService(logger);
+  quotaService.setHistoryService(historyService);
+  globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService, context.secrets);
+  automationService = new AutomationService(context, logger);
+  migrateSecretsIfNeeded(context).then((secrets) => {
+    quotaService.setSecrets(secrets);
+  });
+  context.subscriptions.push(
+    context.secrets.onDidChange(async () => {
+      const secrets = await loadSecrets(context.secrets);
+      quotaService.setSecrets(secrets);
+    })
+  );
   context.subscriptions.push(
     vscode5.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
   );
@@ -1005,7 +1164,7 @@ function activate(context) {
     vscode5.commands.registerCommand("ag-manager.updateAutoClick", async (config) => {
       if (automationService) {
         await automationService.patchSettings(config);
-        setLatestData(latestQuotaData);
+        if (latestQuotaData) setLatestData(latestQuotaData);
       }
     })
   );
@@ -1021,25 +1180,6 @@ function activate(context) {
   setTimeout(() => {
     checkForUpdates(context);
   }, 1e4);
-}
-function getQuotaColor(pct, direction = "down") {
-  if (direction === "up") {
-    if (pct < 80) return { hex: "#FFAB40", dot: "\u{1F7E0}" };
-    return { hex: "#ef4444", dot: "\u{1F534}" };
-  } else {
-    if (pct > 50) return { hex: "#10b981", dot: "\u{1F7E2}" };
-    if (pct > 20) return { hex: "#f59e0b", dot: "\u{1F7E1}" };
-    return { hex: "#ef4444", dot: "\u{1F534}" };
-  }
-}
-function formatTime(t) {
-  const hMatch = t.match(/(\d+)h/);
-  const mMatch = t.match(/(\d+)m/);
-  if (!hMatch && !mMatch) return t;
-  let h = hMatch ? parseInt(hMatch[1]) : 0;
-  let m = mMatch ? parseInt(mMatch[1]) : 0;
-  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h ${m}m`;
-  return `0d ${h}h ${m}m`;
 }
 function buildTooltipSVG(data) {
   const rowHeight = 30;
@@ -1087,7 +1227,8 @@ function buildTooltipSVG(data) {
     currentY += 4;
   };
   if (data.antigravity?.quotas) {
-    GROUPS.forEach((group) => {
+    const groups = autoDetectGroups(data.antigravity.quotas);
+    groups.forEach((group) => {
       const members = data.antigravity.quotas.filter((q) => group.models.includes(q.label));
       renderGroupSection(group.title, members);
     });
@@ -1109,13 +1250,14 @@ function refreshStatusBar() {
   if (!latestQuotaData) return;
   let groupsText = "";
   if (latestQuotaData.antigravity?.quotas) {
-    groupsText += GROUPS.map((g) => {
+    const groups = autoDetectGroups(latestQuotaData.antigravity.quotas);
+    groupsText += groups.map((g) => {
       const members = latestQuotaData.antigravity.quotas.filter((q) => g.models.includes(q.label));
       if (members.length === 0) return "";
       const avg = members.reduce((acc, curr) => acc + curr.remaining, 0) / members.length;
-      const short = g.id === "g1" ? "Pro" : g.id === "g2" ? "Flash" : "C/G";
+      const shortName = g.title.replace("GEMINI ", "G").replace(" PRO", "P").replace(" FLASH", "F").split("/")[0];
       const dot = avg > 50 ? "\u{1F7E2}" : avg > 20 ? "\u{1F7E1}" : "\u{1F534}";
-      return `${dot} ${short} ${Math.round(avg)}%`;
+      return `${dot} ${shortName} ${Math.round(avg)}%`;
     }).filter((t) => t !== "").join("  |  ");
   }
   if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length > 0) {
@@ -1141,17 +1283,18 @@ function refreshStatusBar() {
   statusBarItem.tooltip = tooltip;
 }
 function setLatestData(data) {
-  const autoStatus = automationService ? automationService.dumpDiagnostics() : {};
+  const autoStatus = automationService?.dumpDiagnostics() ?? null;
   const dataStr = JSON.stringify(data);
   const autoStr = JSON.stringify(autoStatus);
-  if (latestQuotaData && JSON.stringify(latestQuotaData) === dataStr && latestAutoStatus && JSON.stringify(latestAutoStatus) === autoStr) {
+  if (dataStr === latestDataHash && autoStr === latestAutoHash) {
     return;
   }
   latestQuotaData = data;
-  latestAutoStatus = autoStatus;
+  latestDataHash = dataStr;
+  latestAutoHash = autoStr;
   refreshStatusBar();
   if (globalSidebarProvider && data) {
-    globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus });
+    globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus ?? void 0 });
   }
   checkNotifications(data);
 }
@@ -1170,43 +1313,61 @@ function checkNotifications(data) {
     if (!quotas) return;
     quotas.forEach((q) => {
       const modelKey = `${serviceName}-${q.label}`;
-      if (notifiedModels.has(modelKey)) return;
       const isUp = q.direction === "up";
       const pct = Math.round(q.remaining);
-      let shouldNotify = false;
-      let message = "";
-      if (isUp) {
-        if (pct >= 80) {
-          shouldNotify = true;
-          message = `${serviceName} [${q.label}] usage is high (${pct}%).`;
-        }
-      } else {
-        if (pct <= 20) {
-          shouldNotify = true;
-          message = `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
-        }
+      const isUnhealthy = isUp ? pct >= 80 : pct <= 20;
+      if (!isUnhealthy) {
+        notifiedModels.delete(modelKey);
+        return;
       }
-      if (shouldNotify) {
-        vscode5.window.showWarningMessage(message, "Dashboard").then((selection) => {
-          if (selection === "Dashboard") {
-            vscode5.commands.executeCommand("sqm.sidebar.focus");
-          }
-        });
-        notifiedModels.add(modelKey);
-      }
+      if (notifiedModels.has(modelKey)) return;
+      const message = isUp ? `${serviceName} [${q.label}] usage is high (${pct}%).` : `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
+      vscode5.window.showWarningMessage(message, "Dashboard").then((selection) => {
+        if (selection === "Dashboard") {
+          vscode5.commands.executeCommand("sqm.sidebar.focus");
+        }
+      });
+      notifiedModels.add(modelKey);
     });
   };
   if (data.antigravity?.quotas) checkQuota("Antigravity", data.antigravity.quotas);
   if (data.claude?.quotas) checkQuota("Claude", data.claude.quotas);
   if (data.codex?.quotas) checkQuota("Codex", data.codex.quotas);
 }
+async function loadSecrets(secrets) {
+  const sessionKey = await secrets.get("claude.sessionKey") || "";
+  const cfClearance = await secrets.get("claude.cfClearance") || "";
+  return { sessionKey, cfClearance };
+}
+async function migrateSecretsIfNeeded(context) {
+  const secrets = context.secrets;
+  const config = vscode5.workspace.getConfiguration("sqm");
+  const oldSessionKey = config.get("claude.sessionKey")?.trim() || "";
+  const oldCfClearance = config.get("claude.cfClearance")?.trim() || "";
+  if (oldSessionKey) {
+    await secrets.store("claude.sessionKey", oldSessionKey);
+    await config.update("claude.sessionKey", void 0, vscode5.ConfigurationTarget.Global);
+  }
+  if (oldCfClearance) {
+    await secrets.store("claude.cfClearance", oldCfClearance);
+    await config.update("claude.cfClearance", void 0, vscode5.ConfigurationTarget.Global);
+  }
+  return loadSecrets(secrets);
+}
 function deactivate() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+  if (automationService) {
+    automationService.dispose();
+    automationService = null;
+  }
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   activate,
   deactivate,
-  globalContext,
   setLatestData
 });
 //# sourceMappingURL=extension.js.map

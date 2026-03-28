@@ -70,17 +70,7 @@
                     "default": true,
                     "description": "Enable notifications for low quotas"
                 },
-                "sqm.claude.sessionKey": {
-                    "type": "string",
-                    "default": "",
-                    "description": "Claude.ai sessionKey cookie (F12 → Application → Cookies → sessionKey)"
-                },
-                "sqm.claude.cfClearance": {
-                    "type": "string",
-                    "default": "",
-                    "description": "Claude.ai cf_clearance cookie (required to bypass Cloudflare). Get from F12 → Application → Cookies → cf_clearance"
-                },
-                "sqm.claude.organizationId": {
+"sqm.claude.organizationId": {
                     "type": "string",
                     "default": "",
                     "description": "Claude.ai organization UUID (auto-detected from ~/.claude.json if empty)"
@@ -98,7 +88,7 @@
                 "ag-manager.automation.enabled": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Bật/tắt hệ thống tự động hóa."
+                    "description": "Enable/disable the automation system."
                 },
                 "ag-manager.automation.rules": {
                     "type": "array",
@@ -113,7 +103,7 @@
                         "Allow Once",
                         "Accept all"
                     ],
-                    "description": "Các quy tắc tự động hóa được kích hoạt."
+                    "description": "Active automation rules for auto-click."
                 }
             }
         }

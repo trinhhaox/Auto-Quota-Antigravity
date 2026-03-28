@@ -1,23 +1,27 @@
 import * as http from 'http';
 import * as https from 'https';
-import { exec } from 'child_process';
+import { exec, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { globalContext } from './extension';
+import { QuotaInfo, UserStatus, DashboardData, ClaudeSecrets } from './types';
+import { HistoryService } from './historyService';
+
+export { QuotaInfo, UserStatus, DashboardData };
 
 const execAsync = promisify(exec);
 
-// [ADDED] Utility: run a command with timeout, cross-platform
 async function execWithTimeout(command: string, timeoutMs: number = 8000): Promise<{ stdout: string, stderr: string }> {
     return new Promise((resolve, reject) => {
+        let child: ChildProcess;
         const timer = setTimeout(() => {
+            child?.kill();
             reject(new Error(`Command timed out after ${timeoutMs}ms`));
         }, timeoutMs);
         const options = process.platform === 'win32' ? { shell: 'powershell.exe' } : {};
-        exec(command, options, (error, stdout, stderr) => {
+        child = exec(command, options, (error, stdout, stderr) => {
             clearTimeout(timer);
             if (error) {
                 (error as any).stdout = stdout;
@@ -30,56 +34,35 @@ async function execWithTimeout(command: string, timeoutMs: number = 8000): Promi
     });
 }
 
-export interface QuotaInfo {
-    label: string;
-    remaining: number;
-    resetTime: string;
-    themeColor?: string;
-    absResetTime?: string;
-    // [ADDED] Optional raw value for display (e.g. "23" or "20%")
-    displayValue?: string;
-    // [ADDED] Render style and direction
-    style?: 'segmented' | 'fluid';
-    direction?: 'up' | 'down';
-}
-
-export interface UserStatus {
-    name: string;
-    email: string;
-    tier: string;
-    quotas: QuotaInfo[];
-    // [ADDED] Optional - used by Claude/Codex groups to show login prompt
-    isAuthenticated?: boolean;
-    error?: string;
-}
-
-// [ADDED] New interface for multi-service dashboard
-export interface DashboardData {
-    antigravity: UserStatus | null;
-    claude: UserStatus | null;
-    codex: UserStatus | null;
-    autoClick?: any;
-    history?: any;
-}
-
 const API_PATH = '/exa.language_server_pb.LanguageServerService/GetUserStatus';
 
 export class QuotaService {
     private serverInfo: { port: number, token: string } | null = null;
     private discovering: Promise<boolean> | null = null;
     
-    // [ADDED] Cache state
     private cachedClaude: UserStatus | null = null;
     private claudeLastFetch: number = 0;
     private cachedCodex: UserStatus | null = null;
     private codexLastFetch: number = 0;
     private readonly CACHE_TTL = 60000; // 60 seconds
-    
-    // [ADDED] Optional logger
+
+    private _secrets: ClaudeSecrets = { sessionKey: '', cfClearance: '' };
+    private _historyService?: HistoryService;
     private logger?: vscode.OutputChannel;
 
     constructor(logger?: vscode.OutputChannel) {
         this.logger = logger;
+    }
+
+    public setHistoryService(historyService: HistoryService) {
+        this._historyService = historyService;
+    }
+
+    public setSecrets(secrets: ClaudeSecrets) {
+        this._secrets = secrets;
+        // Invalidate cache when secrets change
+        this.cachedClaude = null;
+        this.claudeLastFetch = 0;
     }
 
     private log(msg: string) {
@@ -108,7 +91,9 @@ export class QuotaService {
                     displayName = oauth.displayName || '';
                 }
             }
-        } catch { /* ignore */ }
+        } catch (e: any) {
+            this.log(`Failed to read ~/.claude.json: ${e?.message}`);
+        }
 
         const usagePeriod =
             (sqmConfig.get<string>('claude.usagePeriod') as '5-hour' | '7-day' | 'both') || 'both';
@@ -116,11 +101,7 @@ export class QuotaService {
         return { organizationId, email, displayName, subscriptionType, usagePeriod };
     }
 
-    private async fetchClaudeUsage(sessionKey: string, organizationId: string): Promise<any> {
-        const sqmConfig = vscode.workspace.getConfiguration('sqm');
-        const cfClearance = sqmConfig.get<string>('claude.cfClearance')?.trim() || '';
-
-        // Build cookie string - cf_clearance is required to bypass Cloudflare
+    private async fetchClaudeUsage(sessionKey: string, organizationId: string, cfClearance: string = ''): Promise<any> {
         let cookieStr = `sessionKey=${sessionKey}; lastActiveOrg=${organizationId}`;
         if (cfClearance) {
             cookieStr += `; cf_clearance=${cfClearance}`;
@@ -255,7 +236,10 @@ export class QuotaService {
                 try {
                     const parsed = JSON.parse(stdout.trim());
                     processes = Array.isArray(parsed) ? parsed : [parsed];
-                } catch { return false; }
+                } catch (e: any) {
+                    this.log(`Process discovery parse error: ${e?.message}`);
+                    return false;
+                }
 
                 for (const proc of processes) {
                     const cmdLine = proc.CommandLine || "";
@@ -295,7 +279,10 @@ export class QuotaService {
                 const { stdout } = await execAsync(cmd);
                 return stdout.trim().split(/\r?\n/).map(p => parseInt(p.trim())).filter(p => !isNaN(p) && p > 1024);
             }
-        } catch { return []; }
+        } catch (e: any) {
+            this.log(`getListeningPorts failed for PID ${pid}: ${e?.message}`);
+            return [];
+        }
     }
 
     private async testConnection(port: number, token: string): Promise<boolean> {
@@ -428,7 +415,9 @@ export class QuotaService {
                                 : `find "${dir}" -name "${exeName}" -type f 2>/dev/null | head -n 1`;
                             const { stdout } = await execWithTimeout(cmd, 6000);
                             if (stdout?.trim()) { binPath = stdout.trim(); break; }
-                        } catch { /* ignore */ }
+                        } catch (e: any) {
+                            this.log(`Claude binary search in ${dir}: ${e?.message}`);
+                        }
                     }
                 }
                 if (binPath) {
@@ -438,7 +427,9 @@ export class QuotaService {
                     const { stdout } = await execWithTimeout(cmd, 6000);
                     authStatus = JSON.parse(stdout.trim());
                 }
-            } catch { /* CLI not available, use local config */ }
+            } catch (e: any) {
+                this.log(`Claude CLI auth status failed: ${e?.message}`);
+            }
 
             // Determine auth state
             const isLoggedIn = authStatus?.loggedIn ?? !!localConfig.email;
@@ -451,9 +442,9 @@ export class QuotaService {
                 return { name: "Claude Code", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
             }
 
-            // Step 3: Try to fetch usage data (requires sessionKey + cf_clearance)
-            const sqmConfig = vscode.workspace.getConfiguration('sqm');
-            const sessionKey = sqmConfig.get<string>('claude.sessionKey')?.trim() || '';
+            // Step 3: Try to fetch usage data (requires sessionKey + cf_clearance from SecretStorage)
+            const sessionKey = this._secrets.sessionKey;
+            const cfClearance = this._secrets.cfClearance;
 
             if (!sessionKey || !organizationId) {
                 return {
@@ -470,7 +461,7 @@ export class QuotaService {
 
             let usageData: any;
             try {
-                usageData = await this.fetchClaudeUsage(sessionKey, organizationId);
+                usageData = await this.fetchClaudeUsage(sessionKey, organizationId, cfClearance);
             } catch (e: any) {
                 return {
                     name: displayName,
@@ -544,7 +535,9 @@ export class QuotaService {
                         planType = authInfo.chatgpt_plan_type || 'free';
                     }
                 }
-            } catch { /* JWT decode failed */ }
+            } catch (e: any) {
+                this.log(`Codex JWT decode failed: ${e?.message}`);
+            }
 
             // Read model from config.toml
             try {
@@ -553,7 +546,9 @@ export class QuotaService {
                     const modelMatch = configRaw.match(/^model\s*=\s*"([^"]+)"/m);
                     if (modelMatch) model = modelMatch[1];
                 }
-            } catch { /* ignore */ }
+            } catch (e: any) {
+                this.log(`Codex config read failed: ${e?.message}`);
+            }
 
             this.log(`Codex: ${email} (${planType}), model: ${model}`);
             return {
@@ -570,7 +565,6 @@ export class QuotaService {
         }
     }
 
-    // ─── [ADDED] Combined dashboard fetch ────────────────────────────────────
     async fetchDashboard(): Promise<DashboardData> {
         const [antigravity, claude, codex] = await Promise.all([
             this.fetchStatus(),
@@ -578,44 +572,13 @@ export class QuotaService {
             this.fetchCodexStatus()
         ]);
 
-        // --- HISTORY TRACKING ---
-        let history: any = {};
-        if (globalContext) {
-            history = globalContext.globalState.get('quota_history', {}) as any;
-            const today = new Date().toISOString().split('T')[0];
-            if (!history[today]) history[today] = {};
-            
-            const track = (service: string, quotas: QuotaInfo[]) => {
-                quotas.forEach(q => {
-                    const key = `${service}_${q.label.replace(/ \(.+?\)/g, '')}`;
-                    const isUp = q.direction === 'up';
-                    const current = q.remaining;
-                    if (history[today][key] === undefined) {
-                        history[today][key] = { value: current, direction: q.direction || 'down' };
-                    } else {
-                        const entry = history[today][key];
-                        // Normalize old format (plain number) to new format
-                        if (typeof entry === 'number') {
-                            history[today][key] = { value: entry, direction: q.direction || 'down' };
-                        }
-                        if (isUp) history[today][key].value = Math.max(history[today][key].value, current);
-                        else history[today][key].value = Math.min(history[today][key].value, current);
-                    }
-                });
-            };
-            
-            if (antigravity?.quotas) track('AG', antigravity.quotas);
-            if (claude?.quotas) track('Claude', claude.quotas);
-            if (codex?.quotas) track('Codex', codex.quotas);
-            
-            const keys = Object.keys(history).sort();
-            if (keys.length > 7) {
-                const toRemove = keys.slice(0, keys.length - 7);
-                toRemove.forEach(k => delete history[k]);
-            }
-            globalContext.globalState.update('quota_history', history);
+        if (this._historyService) {
+            if (antigravity?.quotas) this._historyService.track('AG', antigravity.quotas);
+            if (claude?.quotas) this._historyService.track('Claude', claude.quotas);
+            if (codex?.quotas) this._historyService.track('Codex', codex.quotas);
         }
 
+        const history = this._historyService?.getHistory() ?? {};
         return { antigravity, claude, codex, history };
     }
 }

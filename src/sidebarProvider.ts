@@ -1,15 +1,24 @@
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
 import { QuotaService } from './quotaService';
 import { setLatestData } from "./extension";
+import { DashboardData, WebviewMessage, AutoClickDiagnostics } from './types';
+
+function getNonce(): string {
+    return crypto.randomBytes(16).toString('hex');
+}
+
+const SECRET_KEYS = ['claude.sessionKey', 'claude.cfClearance'] as const;
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
 
-    private static _latestData: any = null;
+    private static _latestData: (DashboardData & { autoClick?: AutoClickDiagnostics }) | null = null;
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
-        private readonly _quotaService: QuotaService
+        private readonly _quotaService: QuotaService,
+        private readonly _secrets: vscode.SecretStorage
     ) { }
 
     public resolveWebviewView(webviewView: vscode.WebviewView) {
@@ -20,28 +29,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         };
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-        // Gửi ngay dữ liệu mới nhất nếu có
         if (SidebarProvider._latestData) {
             this.syncToWebview(SidebarProvider._latestData);
         }
 
-        // Tự động refresh nhẹ nhàng khi mở ra
         this.updateData();
 
-        webviewView.webview.onDidReceiveMessage(async (data) => {
+        webviewView.webview.onDidReceiveMessage(async (data: WebviewMessage) => {
             if (data.type === "onRefresh") {
                 this.updateData();
             } else if (data.type === "onAutoClickChange") {
                 vscode.commands.executeCommand("ag-manager.updateAutoClick", data.config);
             } else if (data.type === "getSettings") {
-                this._sendSettings();
+                await this._sendSettings();
             } else if (data.type === "saveSettings") {
                 await this._saveSettings(data.settings);
             }
         });
     }
 
-    public syncToWebview(data: any) {
+    public syncToWebview(data: DashboardData & { autoClick?: AutoClickDiagnostics }) {
         SidebarProvider._latestData = data;
         if (this._view) {
             this._view.webview.postMessage({ type: "update", data });
@@ -52,20 +59,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (this._view) {
             this._view.webview.postMessage({ type: "loading" });
         }
-        // [MODIFIED] Changed fetchStatus() → fetchDashboard() to include Claude & Codex
         const data = await this._quotaService.fetchDashboard();
-
-        setLatestData(data); // Cập nhật global state và status bar
+        setLatestData(data);
     }
 
-    private _sendSettings() {
+    private async _sendSettings() {
         const sqm = vscode.workspace.getConfiguration('sqm');
         const ag = vscode.workspace.getConfiguration('ag-manager');
+
+        // Read secrets from SecretStorage (masked for display)
+        const sessionKey = (await this._secrets.get('claude.sessionKey')) || '';
+        const cfClearance = (await this._secrets.get('claude.cfClearance')) || '';
+
         this._view?.webview.postMessage({
             type: 'settings',
             settings: {
-                'claude.sessionKey': sqm.get<string>('claude.sessionKey') || '',
-                'claude.cfClearance': sqm.get<string>('claude.cfClearance') || '',
+                'claude.sessionKey': sessionKey,
+                'claude.cfClearance': cfClearance,
                 'claude.organizationId': sqm.get<string>('claude.organizationId') || '',
                 'claude.usagePeriod': sqm.get<string>('claude.usagePeriod') || 'both',
                 'refreshInterval': sqm.get<number>('refreshInterval') || 5,
@@ -75,20 +85,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    private async _saveSettings(settings: Record<string, any>) {
+    private async _saveSettings(settings: Record<string, unknown>) {
         const sqm = vscode.workspace.getConfiguration('sqm');
         const ag = vscode.workspace.getConfiguration('ag-manager');
         const target = vscode.ConfigurationTarget.Global;
 
         for (const [key, value] of Object.entries(settings)) {
-            if (key.startsWith('automation.')) {
+            // Store secrets in SecretStorage, not in settings.json
+            if (SECRET_KEYS.includes(key as typeof SECRET_KEYS[number])) {
+                await this._secrets.store(key, String(value));
+            } else if (key.startsWith('automation.')) {
                 await ag.update(key, value, target);
             } else {
                 await sqm.update(key, value, target);
             }
         }
 
-        this._sendSettings();
+        await this._sendSettings();
         this.updateData();
         vscode.window.showInformationMessage('Settings saved!');
     }
@@ -97,11 +110,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, "webview-ui", "style.css"));
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, "webview-ui", "main.js"));
 
+        const nonce = getNonce();
         return `<!DOCTYPE html>
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
                 <link href="${styleUri}" rel="stylesheet">
             </head>
             <body>
@@ -119,7 +134,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         <p class="loading">Establishing connection...</p>
                     </div>
                 </div>
-                <script src="${scriptUri}"></script>
+                <script nonce="${nonce}" src="${scriptUri}"></script>
             </body>
             </html>`;
     }

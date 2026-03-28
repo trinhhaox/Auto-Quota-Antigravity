@@ -6,6 +6,7 @@ import * as crypto from 'crypto';
 import { execSync, execFile } from 'child_process';
 import * as http from 'http';
 import * as url from 'url';
+import { AutoClickConfig, AutoClickDiagnostics, AutoClickLogEntry } from './types';
 
 /**
  * AutomationService - Hệ thống tự động hóa thông minh cho AG Manager.
@@ -16,18 +17,25 @@ export class AutomationService {
     private _context: vscode.ExtensionContext;
     private _server: http.Server | null = null;
     private _port: number = 0;
+    private _logger?: vscode.OutputChannel;
+    private _authToken: string = crypto.randomBytes(32).toString('hex');
 
     // Automation States
     private _isActive: boolean = true;
     private _rules: string[] = ['Run', 'Allow', 'Accept', 'Always Allow', 'Keep Waiting', 'Retry', 'Continue', 'Allow Once', 'Accept all'];
     private _metrics: Record<string, number> = {};
-    private _history: any[] = [];
+    private _history: AutoClickLogEntry[] = [];
     private _config = { scanDelay: 1000, restPeriod: 7000 };
 
-    constructor(context: vscode.ExtensionContext) {
+    constructor(context: vscode.ExtensionContext, logger?: vscode.OutputChannel) {
         this._context = context;
+        this._logger = logger;
         this.syncState();
         this.boot();
+    }
+
+    private log(msg: string) {
+        this._logger?.appendLine(`[${new Date().toLocaleTimeString()}] [Automation] ${msg}`);
     }
 
     private syncState() {
@@ -42,11 +50,65 @@ export class AutomationService {
         this.launchBridge();
         this.initSystemWatcher();
         if (!this.verifyInjection()) {
-            this.deployBridgeScript();
+            this.requestConsentAndDeploy();
         }
     }
 
-    public async patchSettings(patch: any) {
+    private async requestConsentAndDeploy() {
+        const consented = this._context.globalState.get<boolean>('automation_consent', false);
+        if (consented) {
+            this.deployBridgeScript();
+            return;
+        }
+
+        const choice = await vscode.window.showWarningMessage(
+            'AG Manager Automation needs to inject a script into VS Code workbench to enable auto-click. This modifies VS Code internal files. Continue?',
+            'Allow', 'Deny'
+        );
+
+        if (choice === 'Allow') {
+            await this._context.globalState.update('automation_consent', true);
+            this.deployBridgeScript();
+        } else {
+            this.log('User denied automation injection consent');
+        }
+    }
+
+    public removeBridgeScript() {
+        const target = this.getTargetFile();
+        if (!target) return;
+
+        try {
+            let html = fs.readFileSync(target, 'utf8');
+            const startTag = `<!-- ${AutomationService.SCRIPT_TAG_ID}-START -->`;
+            const endTag = `<!-- ${AutomationService.SCRIPT_TAG_ID}-END -->`;
+            const startIdx = html.indexOf(startTag);
+            const endIdx = html.indexOf(endTag);
+            if (startIdx !== -1 && endIdx !== -1) {
+                html = html.substring(0, startIdx) + html.substring(endIdx + endTag.length);
+                html = html.replace(/\n\s*\n/g, '\n');
+                this.writeSafe(target, html);
+                this.recalculateHashes();
+                this.log('Bridge script removed from workbench.html');
+            }
+
+            // Clean up the JS file
+            const dir = path.dirname(target);
+            const bridgeFile = path.join(dir, 'ag-automation-bridge.js');
+            if (fs.existsSync(bridgeFile)) {
+                fs.unlinkSync(bridgeFile);
+            }
+        } catch (err: any) {
+            this.log(`Failed to remove bridge script: ${err.message}`);
+        }
+    }
+
+    public dispose() {
+        this._server?.close();
+        this._server = null;
+    }
+
+    public async patchSettings(patch: AutoClickConfig) {
         if (patch.enabled !== undefined) this._isActive = patch.enabled;
         if (patch.rules !== undefined && Array.isArray(patch.rules)) {
             this._rules = patch.rules;
@@ -59,7 +121,7 @@ export class AutomationService {
         ]);
     }
 
-    public dumpDiagnostics() {
+    public dumpDiagnostics(): AutoClickDiagnostics {
         return {
             active: this._isActive,
             rules: this._rules,
@@ -71,12 +133,20 @@ export class AutomationService {
 
     private launchBridge() {
         this._server = http.createServer((req, res) => {
-            res.setHeader('Access-Control-Allow-Origin', '*');
             res.setHeader('Content-Type', 'application/json');
+
+            // Validate auth token on every request
+            const authHeader = req.headers['authorization'] || '';
+            const queryToken = url.parse(req.url || '', true).query?.token as string;
+            const token = authHeader.replace('Bearer ', '') || queryToken || '';
+            if (token !== this._authToken) {
+                res.writeHead(401);
+                res.end(JSON.stringify({ error: 'Unauthorized' }));
+                return;
+            }
 
             const endpoint = url.parse(req.url || '', true);
 
-            // System Status Heartbeat
             if (endpoint.pathname === '/system/heartbeat') {
                 if (endpoint.query?.delta) {
                     try {
@@ -116,11 +186,21 @@ export class AutomationService {
         });
 
         const bind = (p: number) => {
-            if (p > 48850) return;
+            if (p > 48850) {
+                this.log('Failed to bind bridge server: all ports 48787-48850 in use');
+                vscode.window.showWarningMessage('AG Automation: Could not start bridge server — all ports in use.');
+                return;
+            }
             this._server?.listen(p, '127.0.0.1', () => {
                 this._port = p;
-                console.log(`[Automation] Bridge active on port ${p}`);
-            }).on('error', (e: any) => e.code === 'EADDRINUSE' ? bind(p + 1) : null);
+                this.log(`Bridge active on port ${p}`);
+            }).on('error', (e: any) => {
+                if (e.code === 'EADDRINUSE') {
+                    bind(p + 1);
+                } else {
+                    this.log(`Bridge bind error on port ${p}: ${e.message}`);
+                }
+            });
         };
         bind(48787);
     }
@@ -194,6 +274,7 @@ export class AutomationService {
             // Dynamic Config Injection
             code = code.replace('__RULES__', JSON.stringify(this._rules));
             code = code.replace('__STATE__', String(this._isActive));
+            code = code.replace('__AUTH_TOKEN__', JSON.stringify(this._authToken));
 
             const finalScriptPath = path.join(dir, 'ag-automation-bridge.js');
             this.writeSafe(finalScriptPath, code);
@@ -206,7 +287,8 @@ export class AutomationService {
             }
             this.recalculateHashes();
         } catch (err: any) {
-            console.error('[Automation] Deploy failed:', err.message);
+            this.log(`Deploy failed: ${err.message}`);
+            vscode.window.showErrorMessage(`AG Automation: Failed to deploy bridge script — ${err.message}`);
         }
     }
 
@@ -214,14 +296,17 @@ export class AutomationService {
         try {
             fs.writeFileSync(p, c, 'utf8');
         } catch (e) {
-            if (process.platform === 'win32') throw new Error("Yêu cầu Administrator để cài đặt tính năng tự động.");
+            if (process.platform === 'win32') throw new Error("Administrator privileges required to install automation.");
             const tmp = path.join(os.tmpdir(), `ag_tmp_${Date.now()}`);
             fs.writeFileSync(tmp, c);
-            const cmd = process.platform === 'darwin'
-                ? `osascript -e 'do shell script "cp ${tmp} ${p}" with administrator privileges'`
-                : `pkexec cp ${tmp} ${p}`;
-            execSync(cmd);
-            fs.unlinkSync(tmp);
+            try {
+                const cmd = process.platform === 'darwin'
+                    ? `osascript -e 'do shell script "cp ${tmp} ${p}" with administrator privileges'`
+                    : `pkexec cp ${tmp} ${p}`;
+                execSync(cmd);
+            } finally {
+                try { fs.unlinkSync(tmp); } catch { /* cleanup best-effort */ }
+            }
         }
     }
 
@@ -239,6 +324,8 @@ export class AutomationService {
                 }
             });
             this.writeSafe(pJson, JSON.stringify(data, null, '\t'));
-        } catch (e) { }
+        } catch (e: any) {
+            this.log(`Hash recalculation failed: ${e?.message}`);
+        }
     }
 }
