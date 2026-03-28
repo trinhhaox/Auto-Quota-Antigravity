@@ -7,7 +7,6 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { QuotaInfo, UserStatus, DashboardData, ClaudeSecrets } from './types';
-import { HistoryService } from './historyService';
 
 export { QuotaInfo, UserStatus, DashboardData };
 
@@ -47,15 +46,10 @@ export class QuotaService {
     private readonly CACHE_TTL = 60000; // 60 seconds
 
     private _secrets: ClaudeSecrets = { sessionKey: '', cfClearance: '' };
-    private _historyService?: HistoryService;
     private logger?: vscode.OutputChannel;
 
     constructor(logger?: vscode.OutputChannel) {
         this.logger = logger;
-    }
-
-    public setHistoryService(historyService: HistoryService) {
-        this._historyService = historyService;
     }
 
     public setSecrets(secrets: ClaudeSecrets) {
@@ -572,13 +566,6 @@ export class QuotaService {
             this.fetchCodexStatus()
         ]);
 
-        if (this._historyService) {
-            if (antigravity?.quotas) this._historyService.track('AG', antigravity.quotas);
-            if (claude?.quotas) this._historyService.track('Claude', claude.quotas);
-            if (codex?.quotas) this._historyService.track('Codex', codex.quotas);
-        }
-
-        const history = this._historyService?.getHistory() ?? {};
-        return { antigravity, claude, codex, history };
+        return { antigravity, claude, codex };
     }
 }

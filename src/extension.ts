@@ -4,7 +4,6 @@ import { SidebarProvider } from './sidebarProvider';
 import { AutomationService } from './automationService';
 import { checkForUpdates } from './updater';
 import { DashboardData, AutoClickDiagnostics, ModelGroup, QuotaInfo, ClaudeSecrets } from './types';
-import { HistoryService } from './historyService';
 import { formatTime, getQuotaColor } from './utils';
 
 let statusBarItem: vscode.StatusBarItem;
@@ -45,9 +44,7 @@ export function activate(context: vscode.ExtensionContext) {
     const logger = vscode.window.createOutputChannel('Auto Quota Antigravity');
     context.subscriptions.push(logger);
 
-    const historyService = new HistoryService(context.globalState);
     const quotaService = new QuotaService(logger);
-    quotaService.setHistoryService(historyService);
     globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService, context.secrets);
     automationService = new AutomationService(context, logger);
 

@@ -23,7 +23,6 @@ export interface DashboardData {
     claude: UserStatus | null;
     codex: UserStatus | null;
     autoClick?: AutoClickDiagnostics;
-    history?: HistoryData;
 }
 
 export interface AutoClickDiagnostics {
@@ -44,10 +43,6 @@ export interface AutoClickConfig {
     enabled?: boolean;
     rules?: string[];
 }
-
-export type HistoryEntry = { value: number; direction: 'up' | 'down' };
-export type DayHistory = Record<string, HistoryEntry | number>;
-export type HistoryData = Record<string, DayHistory>;
 
 export type WebviewMessage =
     | { type: 'onRefresh' }

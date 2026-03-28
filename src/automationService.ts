@@ -49,14 +49,21 @@ export class AutomationService {
     private boot() {
         this.launchBridge();
         this.initSystemWatcher();
-        if (!this.verifyInjection()) {
-            this.requestConsentAndDeploy();
-        }
+        // Always re-deploy to update auth token (regenerated each session)
+        this.requestConsentAndDeploy();
     }
 
     private async requestConsentAndDeploy() {
         const consented = this._context.globalState.get<boolean>('automation_consent', false);
         if (consented) {
+            this.deployBridgeScript();
+            return;
+        }
+
+        // First time — ask user
+        if (this.verifyInjection()) {
+            // Script already present from previous install, auto-consent
+            await this._context.globalState.update('automation_consent', true);
             this.deployBridgeScript();
             return;
         }
@@ -280,8 +287,20 @@ export class AutomationService {
             this.writeSafe(finalScriptPath, code);
 
             let html = fs.readFileSync(target, 'utf8');
-            if (!html.includes(AutomationService.SCRIPT_TAG_ID)) {
-                const tag = `\n<!-- ${AutomationService.SCRIPT_TAG_ID}-START -->\n<script src="ag-automation-bridge.js?ts=${Date.now()}"></script>\n<!-- ${AutomationService.SCRIPT_TAG_ID}-END -->`;
+            const scriptTag = `<script src="ag-automation-bridge.js?ts=${Date.now()}"></script>`;
+            if (html.includes(AutomationService.SCRIPT_TAG_ID)) {
+                // Update existing injection with fresh cache-bust timestamp
+                const startTag = `<!-- ${AutomationService.SCRIPT_TAG_ID}-START -->`;
+                const endTag = `<!-- ${AutomationService.SCRIPT_TAG_ID}-END -->`;
+                const startIdx = html.indexOf(startTag);
+                const endIdx = html.indexOf(endTag);
+                if (startIdx !== -1 && endIdx !== -1) {
+                    html = html.substring(0, startIdx) + `${startTag}\n${scriptTag}\n${endTag}` + html.substring(endIdx + endTag.length);
+                    this.writeSafe(target, html);
+                }
+            } else {
+                // First-time injection
+                const tag = `\n<!-- ${AutomationService.SCRIPT_TAG_ID}-START -->\n${scriptTag}\n<!-- ${AutomationService.SCRIPT_TAG_ID}-END -->`;
                 html = html.replace('</html>', tag + '\n</html>');
                 this.writeSafe(target, html);
             }

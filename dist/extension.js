@@ -78,13 +78,9 @@ var QuotaService = class {
   CACHE_TTL = 6e4;
   // 60 seconds
   _secrets = { sessionKey: "", cfClearance: "" };
-  _historyService;
   logger;
   constructor(logger) {
     this.logger = logger;
-  }
-  setHistoryService(historyService) {
-    this._historyService = historyService;
   }
   setSecrets(secrets) {
     this._secrets = secrets;
@@ -556,13 +552,7 @@ var QuotaService = class {
       this.fetchClaudeStatus(),
       this.fetchCodexStatus()
     ]);
-    if (this._historyService) {
-      if (antigravity?.quotas) this._historyService.track("AG", antigravity.quotas);
-      if (claude?.quotas) this._historyService.track("Claude", claude.quotas);
-      if (codex?.quotas) this._historyService.track("Codex", codex.quotas);
-    }
-    const history = this._historyService?.getHistory() ?? {};
-    return { antigravity, claude, codex, history };
+    return { antigravity, claude, codex };
   }
 };
 
@@ -726,13 +716,16 @@ var AutomationService = class _AutomationService {
   boot() {
     this.launchBridge();
     this.initSystemWatcher();
-    if (!this.verifyInjection()) {
-      this.requestConsentAndDeploy();
-    }
+    this.requestConsentAndDeploy();
   }
   async requestConsentAndDeploy() {
     const consented = this._context.globalState.get("automation_consent", false);
     if (consented) {
+      this.deployBridgeScript();
+      return;
+    }
+    if (this.verifyInjection()) {
+      await this._context.globalState.update("automation_consent", true);
       this.deployBridgeScript();
       return;
     }
@@ -934,10 +927,22 @@ var AutomationService = class _AutomationService {
       const finalScriptPath = path2.join(dir, "ag-automation-bridge.js");
       this.writeSafe(finalScriptPath, code);
       let html = fs2.readFileSync(target, "utf8");
-      if (!html.includes(_AutomationService.SCRIPT_TAG_ID)) {
+      const scriptTag = `<script src="ag-automation-bridge.js?ts=${Date.now()}"></script>`;
+      if (html.includes(_AutomationService.SCRIPT_TAG_ID)) {
+        const startTag = `<!-- ${_AutomationService.SCRIPT_TAG_ID}-START -->`;
+        const endTag = `<!-- ${_AutomationService.SCRIPT_TAG_ID}-END -->`;
+        const startIdx = html.indexOf(startTag);
+        const endIdx = html.indexOf(endTag);
+        if (startIdx !== -1 && endIdx !== -1) {
+          html = html.substring(0, startIdx) + `${startTag}
+${scriptTag}
+${endTag}` + html.substring(endIdx + endTag.length);
+          this.writeSafe(target, html);
+        }
+      } else {
         const tag = `
 <!-- ${_AutomationService.SCRIPT_TAG_ID}-START -->
-<script src="ag-automation-bridge.js?ts=${Date.now()}"></script>
+${scriptTag}
 <!-- ${_AutomationService.SCRIPT_TAG_ID}-END -->`;
         html = html.replace("</html>", tag + "\n</html>");
         this.writeSafe(target, html);
@@ -1047,39 +1052,6 @@ async function showUpdateNotification(newVersion, url2) {
   }
 }
 
-// src/historyService.ts
-var HistoryService = class {
-  constructor(_globalState) {
-    this._globalState = _globalState;
-  }
-  track(service, quotas) {
-    const history = this.getHistory();
-    const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-    if (!history[today]) history[today] = {};
-    quotas.forEach((q) => {
-      const key = `${service}_${q.label.replace(/ \(.+?\)/g, "")}`;
-      const isUp = q.direction === "up";
-      const current = q.remaining;
-      if (history[today][key] === void 0) {
-        history[today][key] = { value: current, direction: q.direction || "down" };
-      } else {
-        const entry = history[today][key];
-        let normalized = typeof entry === "number" ? { value: entry, direction: q.direction || "down" } : entry;
-        normalized.value = isUp ? Math.max(normalized.value, current) : Math.min(normalized.value, current);
-        history[today][key] = normalized;
-      }
-    });
-    const keys = Object.keys(history).sort();
-    if (keys.length > 7) {
-      keys.slice(0, keys.length - 7).forEach((k) => delete history[k]);
-    }
-    this._globalState.update("quota_history", history);
-  }
-  getHistory() {
-    return this._globalState.get("quota_history", {}) ?? {};
-  }
-};
-
 // src/utils.ts
 function formatTime(t) {
   const hMatch = t.match(/(\d+)h/);
@@ -1133,9 +1105,7 @@ function autoDetectGroups(quotas) {
 function activate(context) {
   const logger = vscode5.window.createOutputChannel("Auto Quota Antigravity");
   context.subscriptions.push(logger);
-  const historyService = new HistoryService(context.globalState);
   const quotaService = new QuotaService(logger);
-  quotaService.setHistoryService(historyService);
   globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService, context.secrets);
   automationService = new AutomationService(context, logger);
   migrateSecretsIfNeeded(context).then((secrets) => {

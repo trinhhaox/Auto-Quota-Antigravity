@@ -1,5 +1,15 @@
 # Changelog - AG Manager
 
+## [1.3.1] - 2026-03-28
+
+### Bug Fixes
+- **Automation Bridge Auth:** Fixed auth token becoming stale after VS Code restart — bridge script is now re-deployed every session with a fresh token.
+- **Cache Busting:** Script tag timestamp is updated on every deploy to prevent browser caching of stale bridge script.
+- **Auto-Consent:** If automation script was previously installed, consent is granted automatically without re-prompting.
+
+### Removed
+- **Usage History (7 Days):** Removed the analytics history section from the dashboard, including all related tracking, rendering, and CSS.
+
 ## [1.3.0] - 2026-03-28
 
 ### Security
