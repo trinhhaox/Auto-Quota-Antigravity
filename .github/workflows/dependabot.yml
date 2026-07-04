@@ -1,0 +1,44 @@
+version: 2
+updates:
+  # npm dependencies
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+    open-pull-requests-limit: 5
+    pull-request-branch-name:
+      separator: "/"
+    reviewers:
+      - "trinhhaox"
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore(deps):"
+      include: "scope"
+    allow:
+      - dependency-type: "direct"
+    ignore:
+      # Add packages to ignore if needed
+      # - dependency-name: "package-name"
+    rebase-strategy: "disabled"
+    versioning-strategy: "increase"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+    pull-request-branch-name:
+      separator: "/"
+    reviewers:
+      - "trinhhaox"
+    labels:
+      - "github-actions"
+    commit-message:
+      prefix: "ci:"
+      include: "scope"

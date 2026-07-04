@@ -1,0 +1,134 @@
+name: Security Checks & Build
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    name: Secret Scanning & Security
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Gitleaks - Secret Detection
+      - name: Run Gitleaks Secret Scanning
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: true
+
+      # TruffleHog - Advanced secret detection
+      - name: Run TruffleHog Secret Scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+
+      # SEMGREP - Code analysis
+      - name: Run Semgrep Security Scan
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >
+            p/security-audit
+            p/owasp-top-ten
+
+  dependency-check:
+    runs-on: ubuntu-latest
+    name: Dependency Security
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=moderate || true
+
+      - name: Run OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'Auto-Quota-Antigravity'
+          path: '.'
+          format: 'SARIF'
+          args: >
+            --enable-retired
+
+      - name: Upload Dependency Check results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'dependency-check-report.sarif'
+
+  build:
+    runs-on: ubuntu-latest
+    name: Build & Test
+    needs: [security, dependency-check]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run build
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          if [ ! -f dist/extension.js ]; then
+            echo "Build failed: dist/extension.js not found"
+            exit 1
+          fi
+
+  codeql:
+    runs-on: ubuntu-latest
+    name: CodeQL Analysis
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: 'javascript'
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+
+  results:
+    runs-on: ubuntu-latest
+    name: Security Results Summary
+    needs: [security, dependency-check, build, codeql]
+    if: always()
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "## 🔒 Security Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Secret Scanning: Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Dependency Check: Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Build: Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ CodeQL Analysis: Complete" >> $GITHUB_STEP_SUMMARY

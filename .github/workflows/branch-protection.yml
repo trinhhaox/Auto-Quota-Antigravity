@@ -1,0 +1,44 @@
+name: Branch Protection Setup
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [setup-branch-protection]
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      admin: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Branch Protection
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            
+            core.info(`Setting up branch protection for ${owner}/${repo}`);
+            
+            // This is informational - actual branch protection must be set via GitHub UI or API
+            core.notice('Branch Protection Setup Required', {
+              title: 'Branch Protection Configuration',
+              file: '.github/workflows/branch-protection.yml'
+            });
+            
+            console.log('\n🔒 BRANCH PROTECTION REQUIREMENTS:');
+            console.log('\nPlease configure the following on GitHub:');
+            console.log('\n1. Go to: Settings → Branches → Add rule');
+            console.log('2. Apply to branch: main');
+            console.log('3. Enable:');
+            console.log('   ✓ Require a pull request before merging');
+            console.log('   ✓ Require code reviews (at least 1)');
+            console.log('   ✓ Require status checks to pass');
+            console.log('   ✓ Require branches to be up to date');
+            console.log('   ✓ Require conversation resolution');
+            console.log('   ✓ Require commits to be signed');
+            console.log('   ✓ Allow force pushes: Dismiss stale reviews');
+            console.log('   ✓ Restrict who can push: Admin only');
