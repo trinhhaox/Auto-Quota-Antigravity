@@ -147,7 +147,7 @@ function renderAutoClick(config) {
 
     // Full rule set — must cover every default rule the host ships,
     // otherwise some rules can never be toggled off from the UI.
-    const rules = [
+    const builtinRules = [
         { id: 'Run', label: 'Run' },
         { id: 'Allow', label: 'Allow' },
         { id: 'Accept', label: 'Accept' },
@@ -158,6 +158,10 @@ function renderAutoClick(config) {
         { id: 'Keep Waiting', label: 'Keep Waiting' },
         { id: 'Accept all', label: 'Accept All' }
     ];
+    const customRules = Array.isArray(config.customRules) ? config.customRules : [];
+    const rules = builtinRules.concat(
+        customRules.map(r => ({ id: r, label: r, custom: true }))
+    );
 
     const metrics = config.metrics || {};
     const totalActions = config.total_actions || 0;
@@ -171,6 +175,31 @@ function renderAutoClick(config) {
                         <span class="activity-ts">${escapeHtml(l.ts || '')}</span>
                         <span class="activity-ref">${escapeHtml(l.ref || l.act || '')}</span>
                     </div>`).join('')}
+           </div>`
+        : '';
+
+    // 7-day action bar chart (oldest → today)
+    const daily = config.daily || {};
+    const dayBars = [];
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        // Local date key — must mirror automation-stats.ts, not UTC
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        dayBars.push({ key, count: daily[key] || 0, dow: 'SMTWTFS'[d.getDay()] });
+    }
+    const maxCount = Math.max(1, ...dayBars.map(b => b.count));
+    const weekTotal = dayBars.reduce((a, b) => a + b.count, 0);
+    const dailyHtml = weekTotal > 0
+        ? `<div class="daily-chart">
+                <div class="activity-title">Actions — last 7 days (${weekTotal})</div>
+                <div class="daily-bars">
+                    ${dayBars.map(b => `
+                        <div class="daily-col" title="${b.key}: ${b.count}">
+                            <div class="daily-bar" style="height:${Math.max(2, Math.round((b.count / maxCount) * 28))}px"></div>
+                            <div class="daily-dow">${b.dow}</div>
+                        </div>`).join('')}
+                </div>
            </div>`
         : '';
 
@@ -196,22 +225,62 @@ function renderAutoClick(config) {
         return `
                     <div class="automation-card ${isActuallyActive ? 'active' : ''} ${!config.active ? 'disabled' : ''}" data-rule="${escapeHtml(rule.id)}">
                         <div class="glow-ring"></div>
+                        ${rule.custom ? `<span class="rule-remove" data-remove="${escapeHtml(rule.id)}" title="Remove custom rule">&times;</span>` : ''}
                         ${count > 0 ? `<span class="rule-badge">${count > 999 ? '999+' : count}</span>` : ''}
-                        <div class="automation-label">${rule.label}</div>
+                        <div class="automation-label">${escapeHtml(rule.label)}</div>
                         <div class="automation-status">${isActuallyActive ? 'Active' : (config.active ? 'Idle' : 'Paused')}</div>
                     </div>
                 `;
     }).join('')}
         </div>
+
+        <div class="custom-rule-row">
+            <input id="custom-rule-input" class="settings-input" maxlength="40"
+                placeholder="Add button label (e.g. Confirm)..." spellcheck="false">
+            <button id="custom-rule-add" class="settings-eye">Add</button>
+        </div>
+        ${dailyHtml}
         ${activityHtml}
     `;
 
     // Event delegation — single listener, no re-registration leak
     container.onclick = function(e) {
+        const rulesList = Array.isArray(config.rules) ? config.rules : [];
+
+        // Remove custom rule (× badge) — must not toggle the card underneath
+        const removeBtn = e.target.closest('.rule-remove');
+        if (removeBtn) {
+            const ruleId = removeBtn.getAttribute('data-remove');
+            vscode.postMessage({
+                type: 'onAutoClickChange',
+                config: {
+                    rules: rulesList.filter(r => r !== ruleId),
+                    customRules: customRules.filter(r => r !== ruleId)
+                }
+            });
+            return;
+        }
+
+        // Add custom rule from the input field
+        if (e.target.id === 'custom-rule-add') {
+            const input = document.getElementById('custom-rule-input');
+            const value = (input.value || '').trim();
+            if (!value) return;
+            const exists = rules.some(r => r.id.toLowerCase() === value.toLowerCase());
+            if (exists) { input.value = ''; return; }
+            vscode.postMessage({
+                type: 'onAutoClickChange',
+                config: {
+                    rules: [...rulesList, value],          // enable immediately
+                    customRules: [...customRules, value]
+                }
+            });
+            return;
+        }
+
         const card = e.target.closest('.automation-card');
         if (card) {
             const ruleId = card.getAttribute('data-rule');
-            const rulesList = Array.isArray(config.rules) ? config.rules : [];
             let currentRules = [...rulesList];
 
             card.style.opacity = '0.5';
@@ -350,6 +419,11 @@ function renderSettingsData(settings) {
             { value: 'full', label: 'Full' },
             { value: 'compact', label: 'Compact' },
             { value: 'dot', label: 'Dot only' }
+        ]},
+        { key: 'autoPauseOnLowQuota', label: 'Auto-pause on low quota', type: 'toggle' },
+        { key: 'automation.scanScope', label: 'Auto-click scope', type: 'select', options: [
+            { value: 'all', label: 'Whole window' },
+            { value: 'panel', label: 'Panels only' }
         ]},
     ];
 

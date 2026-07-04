@@ -47,6 +47,7 @@
                 config.port = p; // Remember working port
                 config.active = remote.power;
                 config.rules = remote.rules;
+                config.scope = remote.scope || 'all';
                 if (remote.timing) {
                     config.scanInterval = remote.timing.scanDelay || 1000;
                     config.restPeriod = remote.timing.restPeriod || 7000;
@@ -58,6 +59,10 @@
             }
         }
     }
+
+    // Scope 'panel' restricts clicks to side/aux/bottom panels, notification
+    // toasts and dialogs — never buttons in the editor area or title bar.
+    const PANEL_SCOPE_SELECTOR = '.part.sidebar, .part.auxiliarybar, .part.panel, .notifications-toasts, .monaco-dialog-box';
 
     // 2. Intelligent Click Engine — scan buttons in document + iframes
     function findButtonsRecursive(root, results = []) {
@@ -94,6 +99,7 @@
 
             if (matchedRule) {
                 if (btn.closest('.monaco-editor')) continue;
+                if (config.scope === 'panel' && !btn.closest(PANEL_SCOPE_SELECTOR)) continue;
                 // Cooldown: UI re-renders create fresh elements with the same
                 // label — don't rapid-fire the same rule within restPeriod.
                 if (now - (state.lastClickAt[matchedRule] || 0) < (config.restPeriod || 7000)) continue;

@@ -74,7 +74,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 'enableNotifications': sqm.get<boolean>('enableNotifications') !== false,
                 'notifyThreshold': sqm.get<number>('notifyThreshold') ?? 20,
                 'statusBar.mode': sqm.get<string>('statusBar.mode') || 'full',
+                'autoPauseOnLowQuota': sqm.get<boolean>('autoPauseOnLowQuota') === true,
                 'automation.enabled': ag.get<boolean>('automation.enabled') !== false,
+                'automation.scanScope': ag.get<string>('automation.scanScope') || 'all',
             }
         });
     }

@@ -35,7 +35,7 @@ __export(extension_exports, {
   setLatestData: () => setLatestData
 });
 module.exports = __toCommonJS(extension_exports);
-var vscode5 = __toESM(require("vscode"));
+var vscode6 = __toESM(require("vscode"));
 
 // src/quotaService.ts
 var http = __toESM(require("http"));
@@ -253,7 +253,7 @@ var QuotaService = class {
           "Authorization": `Bearer ${accessToken}`,
           "anthropic-beta": "oauth-2025-04-20",
           "Content-Type": "application/json",
-          "User-Agent": "auto-quota-antigravity/1.7.0"
+          "User-Agent": "auto-quota-antigravity/1.8.0"
         },
         timeout: 1e4
       };
@@ -749,7 +749,9 @@ var SidebarProvider = class _SidebarProvider {
         "enableNotifications": sqm.get("enableNotifications") !== false,
         "notifyThreshold": sqm.get("notifyThreshold") ?? 20,
         "statusBar.mode": sqm.get("statusBar.mode") || "full",
-        "automation.enabled": ag.get("automation.enabled") !== false
+        "autoPauseOnLowQuota": sqm.get("autoPauseOnLowQuota") === true,
+        "automation.enabled": ag.get("automation.enabled") !== false,
+        "automation.scanScope": ag.get("automation.scanScope") || "all"
       }
     });
   }
@@ -802,7 +804,7 @@ var SidebarProvider = class _SidebarProvider {
 };
 
 // src/automationService.ts
-var vscode3 = __toESM(require("vscode"));
+var vscode4 = __toESM(require("vscode"));
 var fs3 = __toESM(require("fs"));
 var path3 = __toESM(require("path"));
 var os3 = __toESM(require("os"));
@@ -810,16 +812,95 @@ var crypto2 = __toESM(require("crypto"));
 var import_child_process2 = require("child_process");
 var http2 = __toESM(require("http"));
 var url = __toESM(require("url"));
+
+// src/automation-stats.ts
+var vscode3 = __toESM(require("vscode"));
+var AutomationStats = class _AutomationStats {
+  constructor(ctx2, onPauseRequest) {
+    this.ctx = ctx2;
+    this.onPauseRequest = onPauseRequest;
+    this.daily = ctx2.globalState.get(_AutomationStats.STORE_KEY, {});
+    this.prune();
+  }
+  static LOOP_WINDOW_MS = 5 * 60 * 1e3;
+  static LOOP_LIMIT = 15;
+  // clicks of one rule per window
+  static ALERT_COOLDOWN_MS = 10 * 60 * 1e3;
+  static STORE_KEY = "automation_daily";
+  daily;
+  ruleEvents = {};
+  lastLoopAlert = {};
+  // LOCAL date key — toISOString() would bucket late-evening actions into
+  // "yesterday" for timezones ahead of UTC.
+  static dateKey(d) {
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${m}-${day}`;
+  }
+  todayKey() {
+    return _AutomationStats.dateKey(/* @__PURE__ */ new Date());
+  }
+  prune() {
+    const keep = /* @__PURE__ */ new Set();
+    for (let i = 0; i < 7; i++) {
+      const d = /* @__PURE__ */ new Date();
+      d.setDate(d.getDate() - i);
+      keep.add(_AutomationStats.dateKey(d));
+    }
+    for (const k of Object.keys(this.daily)) {
+      if (!keep.has(k)) delete this.daily[k];
+    }
+  }
+  /** Called with each metrics delta reported by the bridge heartbeat. */
+  recordDelta(delta) {
+    const total = Object.values(delta).reduce((a, b) => a + (Number(b) || 0), 0);
+    if (total <= 0) return;
+    const t = this.todayKey();
+    this.daily[t] = (this.daily[t] || 0) + total;
+    this.prune();
+    this.ctx.globalState.update(_AutomationStats.STORE_KEY, this.daily);
+    const now = Date.now();
+    for (const [rule, raw] of Object.entries(delta)) {
+      const count = Number(raw) || 0;
+      if (count <= 0) continue;
+      const events = this.ruleEvents[rule] = this.ruleEvents[rule] || [];
+      for (let i = 0; i < count; i++) events.push(now);
+      while (events.length && now - events[0] > _AutomationStats.LOOP_WINDOW_MS) events.shift();
+      this.maybeAlertLoop(rule, events.length, now);
+    }
+  }
+  maybeAlertLoop(rule, hits, now) {
+    if (hits < _AutomationStats.LOOP_LIMIT) return;
+    if (now - (this.lastLoopAlert[rule] || 0) < _AutomationStats.ALERT_COOLDOWN_MS) return;
+    this.lastLoopAlert[rule] = now;
+    vscode3.window.showWarningMessage(
+      `Automation rule "${rule}" fired ${hits} times in 5 minutes \u2014 the agent may be stuck in a loop.`,
+      "Pause Automation",
+      "Dismiss"
+    ).then((sel) => {
+      if (sel === "Pause Automation") this.onPauseRequest();
+    });
+  }
+  getDaily() {
+    return { ...this.daily };
+  }
+};
+
+// src/automationService.ts
 var AutomationService = class _AutomationService {
   static SCRIPT_TAG_ID = "ag-logic-bridge";
+  static DEFAULT_RULES = ["Run", "Allow", "Accept", "Always Allow", "Keep Waiting", "Retry", "Continue", "Allow Once", "Accept all"];
   _context;
   _server = null;
   _port = 0;
   _logger;
   _authToken;
+  _stats;
   // Automation States
   _isActive = true;
-  _rules = ["Run", "Allow", "Accept", "Always Allow", "Keep Waiting", "Retry", "Continue", "Allow Once", "Accept all"];
+  _rules = [..._AutomationService.DEFAULT_RULES];
+  _customRules = [];
+  _scanScope = "all";
   _metrics = {};
   _history = [];
   _config = { scanDelay: 1e3, restPeriod: 7e3 };
@@ -832,16 +913,25 @@ var AutomationService = class _AutomationService {
       context.globalState.update("automation_token", token);
     }
     this._authToken = token;
+    this._stats = new AutomationStats(context, () => {
+      this.patchSettings({ enabled: false }).catch(() => {
+      });
+    });
     this.syncState();
     this.boot();
+    context.subscriptions.push(vscode4.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("ag-manager.automation")) this.syncState();
+    }));
   }
   log(msg) {
     this._logger?.appendLine(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] [Automation] ${msg}`);
   }
   syncState() {
-    const store = vscode3.workspace.getConfiguration("ag-manager.automation");
+    const store = vscode4.workspace.getConfiguration("ag-manager.automation");
     this._isActive = store.get("enabled", true);
     this._rules = store.get("rules", this._rules);
+    this._customRules = store.get("customRules", []);
+    this._scanScope = store.get("scanScope", "all");
     this._metrics = this._context.globalState.get("automation_metrics", {});
     this._history = this._context.globalState.get("automation_history", []);
   }
@@ -861,7 +951,7 @@ var AutomationService = class _AutomationService {
       this.deployBridgeScript();
       return;
     }
-    const choice = await vscode3.window.showWarningMessage(
+    const choice = await vscode4.window.showWarningMessage(
       "AG Manager Automation needs to inject a script into VS Code workbench to enable auto-click. This modifies VS Code internal files. Continue?",
       "Allow",
       "Deny"
@@ -907,19 +997,30 @@ var AutomationService = class _AutomationService {
     if (patch.rules !== void 0 && Array.isArray(patch.rules)) {
       this._rules = patch.rules;
     }
-    const store = vscode3.workspace.getConfiguration("ag-manager.automation");
+    if (patch.customRules !== void 0 && Array.isArray(patch.customRules)) {
+      this._customRules = [...new Set(
+        patch.customRules.map((s) => String(s).trim()).filter(Boolean)
+      )];
+      this._rules = this._rules.filter(
+        (r) => _AutomationService.DEFAULT_RULES.includes(r) || this._customRules.includes(r)
+      );
+    }
+    const store = vscode4.workspace.getConfiguration("ag-manager.automation");
     await Promise.all([
-      store.update("enabled", this._isActive, vscode3.ConfigurationTarget.Global),
-      store.update("rules", this._rules, vscode3.ConfigurationTarget.Global)
+      store.update("enabled", this._isActive, vscode4.ConfigurationTarget.Global),
+      store.update("rules", this._rules, vscode4.ConfigurationTarget.Global),
+      store.update("customRules", this._customRules, vscode4.ConfigurationTarget.Global)
     ]);
   }
   dumpDiagnostics() {
     return {
       active: this._isActive,
       rules: this._rules,
+      customRules: this._customRules,
       total_actions: Object.values(this._metrics).reduce((a, b) => a + b, 0),
       metrics: this._metrics,
-      logs: this._history.slice(0, 8)
+      logs: this._history.slice(0, 8),
+      daily: this._stats.getDaily()
     };
   }
   launchBridge() {
@@ -940,13 +1041,15 @@ var AutomationService = class _AutomationService {
             const delta = JSON.parse(decodeURIComponent(endpoint.query.delta));
             Object.keys(delta).forEach((k) => this._metrics[k] = (this._metrics[k] || 0) + delta[k]);
             this._context.globalState.update("automation_metrics", this._metrics);
+            this._stats.recordDelta(delta);
           } catch (e) {
           }
         }
         res.end(JSON.stringify({
           power: this._isActive,
           rules: this._rules,
-          timing: this._config
+          timing: this._config,
+          scope: this._scanScope
         }));
         return;
       }
@@ -977,7 +1080,7 @@ var AutomationService = class _AutomationService {
     const bind = (p) => {
       if (p > 48850) {
         this.log("Failed to bind bridge server: all ports 48787-48850 in use");
-        vscode3.window.showWarningMessage("AG Automation: Could not start bridge server \u2014 all ports in use.");
+        vscode4.window.showWarningMessage("AG Automation: Could not start bridge server \u2014 all ports in use.");
         return;
       }
       this._server?.listen(p, "127.0.0.1", () => {
@@ -1034,7 +1137,7 @@ var AutomationService = class _AutomationService {
     this._context.subscriptions.push({ dispose: () => clearInterval(job) });
   }
   getTargetFile() {
-    const root = vscode3.env.appRoot;
+    const root = vscode4.env.appRoot;
     const paths = [
       path3.join(root, "out/vs/code/electron-sandbox/workbench/workbench.html"),
       path3.join(root, "out/vs/code/electron-browser/workbench/workbench.html"),
@@ -1082,7 +1185,7 @@ ${scriptTag}
       this.recalculateHashes();
     } catch (err) {
       this.log(`Deploy failed: ${err.message}`);
-      vscode3.window.showErrorMessage(`AG Automation: Failed to deploy bridge script \u2014 ${err.message}`);
+      vscode4.window.showErrorMessage(`AG Automation: Failed to deploy bridge script \u2014 ${err.message}`);
     }
   }
   writeSafe(p, c) {
@@ -1105,11 +1208,11 @@ ${scriptTag}
   }
   recalculateHashes() {
     try {
-      const pJson = path3.join(vscode3.env.appRoot, "product.json");
+      const pJson = path3.join(vscode4.env.appRoot, "product.json");
       const data = JSON.parse(fs3.readFileSync(pJson, "utf8"));
       if (!data.checksums) return;
       Object.keys(data.checksums).forEach((k) => {
-        const fullPath = path3.join(vscode3.env.appRoot, "out", k.split("/").join(path3.sep));
+        const fullPath = path3.join(vscode4.env.appRoot, "out", k.split("/").join(path3.sep));
         if (fs3.existsSync(fullPath)) {
           const hash = crypto2.createHash("sha256").update(fs3.readFileSync(fullPath)).digest("base64").replace(/=+$/, "");
           data.checksums[k] = hash;
@@ -1123,7 +1226,7 @@ ${scriptTag}
 };
 
 // src/updater.ts
-var vscode4 = __toESM(require("vscode"));
+var vscode5 = __toESM(require("vscode"));
 var https2 = __toESM(require("https"));
 var REPO_OWNER = "trinhhaox";
 var REPO_NAME = "Auto-Quota-Antigravity";
@@ -1178,9 +1281,9 @@ function isNewerVersion(current, latest) {
 async function showUpdateNotification(newVersion, url2) {
   const action = "T\u1EA3i V\u1EC1 Ngay";
   const message = `M\u1ED9t phi\xEAn b\u1EA3n m\u1EDBi c\u1EE7a Auto Quota Antigravity (v${newVersion}) \u0111\xE3 s\u1EB5n s\xE0ng!`;
-  const result = await vscode4.window.showInformationMessage(message, action);
+  const result = await vscode5.window.showInformationMessage(message, action);
   if (result === action) {
-    vscode4.env.openExternal(vscode4.Uri.parse(url2));
+    vscode5.env.openExternal(vscode5.Uri.parse(url2));
   }
 }
 
@@ -1267,38 +1370,38 @@ function autoDetectGroups(quotas) {
   }));
 }
 function activate(context) {
-  const logger = vscode5.window.createOutputChannel("Auto Quota Antigravity");
+  const logger = vscode6.window.createOutputChannel("Auto Quota Antigravity");
   context.subscriptions.push(logger);
   const quotaService = new QuotaService(logger);
   globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService);
   automationService = new AutomationService(context, logger);
   initQuotaHistory(context);
   context.subscriptions.push(
-    vscode5.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
+    vscode6.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
   );
-  statusBarItem = vscode5.window.createStatusBarItem(vscode5.StatusBarAlignment.Right, 100);
+  statusBarItem = vscode6.window.createStatusBarItem(vscode6.StatusBarAlignment.Right, 100);
   statusBarItem.command = "sqm.menu";
   statusBarItem.text = "$(dashboard) Auto Quota Antigravity";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
   context.subscriptions.push(
-    vscode5.commands.registerCommand("sqm.refresh", async () => {
+    vscode6.commands.registerCommand("sqm.refresh", async () => {
       if (globalSidebarProvider) await globalSidebarProvider.updateData();
     })
   );
   context.subscriptions.push(
-    vscode5.commands.registerCommand("sqm.removeInjection", async () => {
+    vscode6.commands.registerCommand("sqm.removeInjection", async () => {
       if (!automationService) return;
       automationService.removeBridgeScript();
       await automationService.patchSettings({ enabled: false });
       await context.globalState.update("automation_consent", false);
-      vscode5.window.showInformationMessage(
+      vscode6.window.showInformationMessage(
         "Automation bridge removed. Restart the IDE to fully unload it."
       );
     })
   );
   context.subscriptions.push(
-    vscode5.commands.registerCommand("sqm.menu", async () => {
+    vscode6.commands.registerCommand("sqm.menu", async () => {
       const autoActive = automationService?.dumpDiagnostics().active ?? false;
       const items = [
         { id: "refresh", label: "$(refresh) Refresh quotas now" },
@@ -1307,29 +1410,29 @@ function activate(context) {
         { id: "remove", label: "$(trash) Remove automation injection" },
         { id: "settings", label: "$(gear) Extension settings" }
       ];
-      const pick = await vscode5.window.showQuickPick(items, { placeHolder: "Auto Quota Antigravity" });
+      const pick = await vscode6.window.showQuickPick(items, { placeHolder: "Auto Quota Antigravity" });
       switch (pick?.id) {
         case "refresh":
           triggerRefresh();
           break;
         case "dashboard":
-          vscode5.commands.executeCommand("sqm.sidebar.focus");
+          vscode6.commands.executeCommand("sqm.sidebar.focus");
           break;
         case "toggle":
           await automationService?.patchSettings({ enabled: !autoActive });
           if (latestQuotaData) setLatestData(latestQuotaData);
           break;
         case "remove":
-          vscode5.commands.executeCommand("sqm.removeInjection");
+          vscode6.commands.executeCommand("sqm.removeInjection");
           break;
         case "settings":
-          vscode5.commands.executeCommand("workbench.action.openSettings", "sqm");
+          vscode6.commands.executeCommand("workbench.action.openSettings", "sqm");
           break;
       }
     })
   );
   context.subscriptions.push(
-    vscode5.commands.registerCommand("ag-manager.updateAutoClick", async (config) => {
+    vscode6.commands.registerCommand("ag-manager.updateAutoClick", async (config) => {
       if (automationService) {
         await automationService.patchSettings(config);
         if (latestQuotaData) setLatestData(latestQuotaData);
@@ -1338,7 +1441,7 @@ function activate(context) {
   );
   setTimeout(() => triggerRefresh(), 2e3);
   startAutoRefresh();
-  context.subscriptions.push(vscode5.workspace.onDidChangeConfiguration((e) => {
+  context.subscriptions.push(vscode6.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration("sqm.refreshInterval")) {
       startAutoRefresh();
     }
@@ -1346,8 +1449,8 @@ function activate(context) {
       refreshStatusBar();
     }
   }));
-  context.subscriptions.push(vscode5.window.onDidChangeWindowState((ws) => {
-    const intervalMs = (vscode5.workspace.getConfiguration("sqm").get("refreshInterval") || 5) * 60 * 1e3;
+  context.subscriptions.push(vscode6.window.onDidChangeWindowState((ws) => {
+    const intervalMs = (vscode6.workspace.getConfiguration("sqm").get("refreshInterval") || 5) * 60 * 1e3;
     if (ws.focused && Date.now() - lastRefreshAt > intervalMs) {
       triggerRefresh();
     }
@@ -1449,7 +1552,7 @@ function refreshStatusBar() {
   };
   pushService("Claude", latestQuotaData.claude);
   pushService("Codex", latestQuotaData.codex);
-  const mode = vscode5.workspace.getConfiguration("sqm").get("statusBar.mode") || "full";
+  const mode = vscode6.workspace.getConfiguration("sqm").get("statusBar.mode") || "full";
   let text = "Auto Quota Antigravity";
   if (segments.length > 0) {
     const worst = segments.reduce((a, b) => b.health < a.health ? b : a);
@@ -1460,7 +1563,7 @@ function refreshStatusBar() {
   statusBarItem.text = `$(dashboard)  ${text}`;
   const svg = buildTooltipSVG(latestQuotaData);
   const base64 = Buffer.from(svg).toString("base64");
-  const tooltip = new vscode5.MarkdownString();
+  const tooltip = new vscode6.MarkdownString();
   tooltip.appendMarkdown(`![Quota Info](data:image/svg+xml;base64,${base64})
 
 `);
@@ -1480,6 +1583,7 @@ function setLatestData(data) {
   latestDataHash = dataStr;
   latestAutoHash = autoStr;
   recordQuotaSnapshot(data);
+  checkAutoPause(data);
   refreshStatusBar();
   if (globalSidebarProvider && data) {
     globalSidebarProvider.syncToWebview({
@@ -1492,10 +1596,10 @@ function setLatestData(data) {
 }
 function startAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
-  const config = vscode5.workspace.getConfiguration("sqm");
+  const config = vscode6.workspace.getConfiguration("sqm");
   const intervalMins = config.get("refreshInterval") || 5;
   refreshTimer = setInterval(() => {
-    if (!vscode5.window.state.focused) return;
+    if (!vscode6.window.state.focused) return;
     triggerRefresh();
   }, intervalMins * 60 * 1e3);
 }
@@ -1503,8 +1607,27 @@ function triggerRefresh() {
   lastRefreshAt = Date.now();
   if (globalSidebarProvider) globalSidebarProvider.updateData();
 }
+var lastAgMinRemaining = 100;
+function checkAutoPause(data) {
+  const config = vscode6.workspace.getConfiguration("sqm");
+  const quotas = (data.antigravity?.quotas || []).filter(isPercentQuota);
+  if (quotas.length === 0) return;
+  const min = Math.min(...quotas.map((q) => q.remaining));
+  const prev = lastAgMinRemaining;
+  lastAgMinRemaining = min;
+  if (!config.get("autoPauseOnLowQuota")) return;
+  if (!automationService?.dumpDiagnostics().active) return;
+  const threshold = Math.max(1, Math.min(90, config.get("notifyThreshold") || 20));
+  if (min <= threshold && prev > threshold) {
+    automationService.patchSettings({ enabled: false }).catch(() => {
+    });
+    vscode6.window.showWarningMessage(
+      `Automation paused: Antigravity quota dropped to ${Math.round(min)}%. Re-enable it from the dashboard when ready.`
+    );
+  }
+}
 function checkNotifications(data) {
-  const config = vscode5.workspace.getConfiguration("sqm");
+  const config = vscode6.workspace.getConfiguration("sqm");
   if (!config.get("enableNotifications")) return;
   const threshold = Math.max(1, Math.min(90, config.get("notifyThreshold") || 20));
   const checkQuota = (serviceName, quotas) => {
@@ -1519,9 +1642,9 @@ function checkNotifications(data) {
       }
       if (notifiedModels.has(modelKey)) return;
       const message = `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
-      vscode5.window.showWarningMessage(message, "Dashboard").then((selection) => {
+      vscode6.window.showWarningMessage(message, "Dashboard").then((selection) => {
         if (selection === "Dashboard") {
-          vscode5.commands.executeCommand("sqm.sidebar.focus");
+          vscode6.commands.executeCommand("sqm.sidebar.focus");
         }
       });
       notifiedModels.add(modelKey);

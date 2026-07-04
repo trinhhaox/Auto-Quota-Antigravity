@@ -7,6 +7,7 @@ import { execSync, execFile } from 'child_process';
 import * as http from 'http';
 import * as url from 'url';
 import { AutoClickConfig, AutoClickDiagnostics, AutoClickLogEntry } from './types';
+import { AutomationStats } from './automation-stats';
 
 /**
  * AutomationService - Hệ thống tự động hóa thông minh cho AG Manager.
@@ -14,15 +15,19 @@ import { AutoClickConfig, AutoClickDiagnostics, AutoClickLogEntry } from './type
  */
 export class AutomationService {
     private static readonly SCRIPT_TAG_ID = 'ag-logic-bridge';
+    public static readonly DEFAULT_RULES = ['Run', 'Allow', 'Accept', 'Always Allow', 'Keep Waiting', 'Retry', 'Continue', 'Allow Once', 'Accept all'];
     private _context: vscode.ExtensionContext;
     private _server: http.Server | null = null;
     private _port: number = 0;
     private _logger?: vscode.OutputChannel;
     private _authToken: string;
+    private _stats: AutomationStats;
 
     // Automation States
     private _isActive: boolean = true;
-    private _rules: string[] = ['Run', 'Allow', 'Accept', 'Always Allow', 'Keep Waiting', 'Retry', 'Continue', 'Allow Once', 'Accept all'];
+    private _rules: string[] = [...AutomationService.DEFAULT_RULES];
+    private _customRules: string[] = [];
+    private _scanScope: 'all' | 'panel' = 'all';
     private _metrics: Record<string, number> = {};
     private _history: AutoClickLogEntry[] = [];
     private _config = { scanDelay: 1000, restPeriod: 7000 };
@@ -39,8 +44,16 @@ export class AutomationService {
             context.globalState.update('automation_token', token);
         }
         this._authToken = token;
+        this._stats = new AutomationStats(context, () => {
+            this.patchSettings({ enabled: false }).catch(() => { });
+        });
         this.syncState();
         this.boot();
+
+        // Pick up settings edited directly in VS Code preferences
+        context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('ag-manager.automation')) this.syncState();
+        }));
     }
 
     private log(msg: string) {
@@ -51,6 +64,8 @@ export class AutomationService {
         const store = vscode.workspace.getConfiguration('ag-manager.automation');
         this._isActive = store.get('enabled', true);
         this._rules = store.get('rules', this._rules);
+        this._customRules = store.get<string[]>('customRules', []);
+        this._scanScope = store.get<'all' | 'panel'>('scanScope', 'all');
         this._metrics = this._context.globalState.get('automation_metrics', {});
         this._history = this._context.globalState.get('automation_history', []);
     }
@@ -129,11 +144,21 @@ export class AutomationService {
         if (patch.rules !== undefined && Array.isArray(patch.rules)) {
             this._rules = patch.rules;
         }
+        if (patch.customRules !== undefined && Array.isArray(patch.customRules)) {
+            this._customRules = [...new Set(
+                patch.customRules.map(s => String(s).trim()).filter(Boolean)
+            )];
+            // Active rules must exist as builtin or custom — drop orphans
+            this._rules = this._rules.filter(r =>
+                AutomationService.DEFAULT_RULES.includes(r) || this._customRules.includes(r)
+            );
+        }
 
         const store = vscode.workspace.getConfiguration('ag-manager.automation');
         await Promise.all([
             store.update('enabled', this._isActive, vscode.ConfigurationTarget.Global),
-            store.update('rules', this._rules, vscode.ConfigurationTarget.Global)
+            store.update('rules', this._rules, vscode.ConfigurationTarget.Global),
+            store.update('customRules', this._customRules, vscode.ConfigurationTarget.Global)
         ]);
     }
 
@@ -141,9 +166,11 @@ export class AutomationService {
         return {
             active: this._isActive,
             rules: this._rules,
+            customRules: this._customRules,
             total_actions: Object.values(this._metrics).reduce((a, b) => a + b, 0),
             metrics: this._metrics,
-            logs: this._history.slice(0, 8)
+            logs: this._history.slice(0, 8),
+            daily: this._stats.getDaily()
         };
     }
 
@@ -169,12 +196,14 @@ export class AutomationService {
                         const delta = JSON.parse(decodeURIComponent(endpoint.query.delta as string));
                         Object.keys(delta).forEach(k => this._metrics[k] = (this._metrics[k] || 0) + delta[k]);
                         this._context.globalState.update('automation_metrics', this._metrics);
+                        this._stats.recordDelta(delta); // daily counts + loop detection
                     } catch (e) { }
                 }
                 res.end(JSON.stringify({
                     power: this._isActive,
                     rules: this._rules,
-                    timing: this._config
+                    timing: this._config,
+                    scope: this._scanScope
                 }));
                 return;
             }

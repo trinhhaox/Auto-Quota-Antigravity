@@ -30,9 +30,11 @@ export interface DashboardData {
 export interface AutoClickDiagnostics {
     active: boolean;
     rules: string[];
+    customRules: string[];
     total_actions: number;
     metrics: Record<string, number>;
     logs: AutoClickLogEntry[];
+    daily: Record<string, number>; // "YYYY-MM-DD" -> action count (7-day window)
 }
 
 export interface AutoClickLogEntry {
@@ -44,6 +46,7 @@ export interface AutoClickLogEntry {
 export interface AutoClickConfig {
     enabled?: boolean;
     rules?: string[];
+    customRules?: string[];
 }
 
 export type WebviewMessage =

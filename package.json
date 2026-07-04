@@ -2,7 +2,7 @@
     "name": "auto-quota-antigravity",
     "displayName": "Auto Quota Antigravity",
     "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
-    "version": "1.7.0",
+    "version": "1.8.0",
     "publisher": "BiViPi",
     "author": {
         "name": "BiViPi",
@@ -109,6 +109,28 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Enable/disable the automation system."
+                },
+                "sqm.autoPauseOnLowQuota": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Automatically pause the automation system when any Antigravity quota drops below the notify threshold."
+                },
+                "ag-manager.automation.customRules": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "description": "User-defined button labels for auto-click (exact match after normalization)."
+                },
+                "ag-manager.automation.scanScope": {
+                    "type": "string",
+                    "enum": [
+                        "all",
+                        "panel"
+                    ],
+                    "default": "all",
+                    "description": "Where auto-click may act: all = entire workbench, panel = only side/bottom panels, notifications and dialogs."
                 },
                 "ag-manager.automation.rules": {
                     "type": "array",

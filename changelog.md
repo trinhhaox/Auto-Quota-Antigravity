@@ -1,5 +1,17 @@
 # Changelog - AG Manager
 
+## [1.8.0] - 2026-07-05
+
+### Automation Suite — 5 New Features
+- **Custom rules:** add any button label from the dashboard (input under the rule grid); custom rules appear as cards with a remove (×) badge and are matched with the same safe exact-match normalization. Stored in `ag-manager.automation.customRules`.
+- **Auto-pause on low quota** (`sqm.autoPauseOnLowQuota`, default off): when any Antigravity quota crosses below the notify threshold, automation pauses itself and warns you — an unattended agent can no longer burn the remaining quota. Fires only on the downward crossing, so manual re-enable is respected.
+- **Scan scope** (`ag-manager.automation.scanScope`): `panel` mode limits auto-click to side/bottom panels, notification toasts and dialogs — never editor-area buttons. Default `all` (previous behavior).
+- **7-day action chart:** daily automated-action counts rendered as a mini bar chart in the Automation section (today highlighted green).
+- **Stuck-loop alert:** if one rule fires ≥15 times within 5 minutes, a warning offers one-click "Pause Automation" (10-min alert cooldown per rule).
+
+### Internals
+- New `automation-stats.ts` module (daily counts + loop detection); automation settings react to changes made directly in VS Code preferences.
+
 ## [1.7.0] - 2026-07-05
 
 ### Automation Suite — Safety Fix & Upgrades

@@ -316,6 +316,7 @@ export function setLatestData(data: DashboardData) {
     latestAutoHash = autoStr;
 
     recordQuotaSnapshot(data);
+    checkAutoPause(data);
     refreshStatusBar();
     if (globalSidebarProvider && data) {
         globalSidebarProvider.syncToWebview({
@@ -345,6 +346,30 @@ function startAutoRefresh() {
 function triggerRefresh() {
     lastRefreshAt = Date.now();
     if (globalSidebarProvider) globalSidebarProvider.updateData();
+}
+
+// Auto-pause automation when Antigravity quota crosses below the notify
+// threshold — prevents an unattended agent from burning the remaining quota.
+// Fires only on the downward crossing so a manual re-enable is respected.
+let lastAgMinRemaining = 100;
+function checkAutoPause(data: DashboardData) {
+    const config = vscode.workspace.getConfiguration("sqm");
+    const quotas = (data.antigravity?.quotas || []).filter(isPercentQuota);
+    if (quotas.length === 0) return;
+    const min = Math.min(...quotas.map(q => q.remaining));
+    const prev = lastAgMinRemaining;
+    lastAgMinRemaining = min;
+
+    if (!config.get<boolean>("autoPauseOnLowQuota")) return;
+    if (!automationService?.dumpDiagnostics().active) return;
+
+    const threshold = Math.max(1, Math.min(90, config.get<number>("notifyThreshold") || 20));
+    if (min <= threshold && prev > threshold) {
+        automationService.patchSettings({ enabled: false }).catch(() => { });
+        vscode.window.showWarningMessage(
+            `Automation paused: Antigravity quota dropped to ${Math.round(min)}%. Re-enable it from the dashboard when ready.`
+        );
+    }
 }
 
 function checkNotifications(data: DashboardData) {
