@@ -1,2 +1,59 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Credentials and secrets
+.credentials.json
+.claude/
+.codex/
+~/.claude/
+~/.codex/
+
+# API Keys and tokens
+*.pem
+*.key
+*.pub
+!public.key
+*.p12
+*.pfx
+
+# Node modules
 node_modules
+
+# Build output
+dist/
+build/
+out/
+.esbuild/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 *.vsix
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+# Testing
+coverage/
+.nyc_output/
+*.lcov
+
+# Misc
+.cache/
+.temp/
+tmp/
