@@ -14,8 +14,17 @@
 
     const state = {
         clickedElements: new WeakSet(),
-        pendingStats: {}
+        pendingStats: {},
+        lastClickAt: {}   // rule -> timestamp, enforces restPeriod cooldown
     };
+
+    // Normalize labels for SAFE exact matching: lowercase, strip symbols
+    // (keyboard-shortcut hints like "(⌘⏎)"), collapse whitespace.
+    // Substring matching was dangerous: rule "Allow" used to match the
+    // "Don't Allow" button. Exact match after normalization prevents that.
+    function normalizeLabel(s) {
+        return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    }
 
     // 1. Discovery & Heartbeat — sync config from host bridge server
     async function syncWithHost() {
@@ -38,7 +47,10 @@
                 config.port = p; // Remember working port
                 config.active = remote.power;
                 config.rules = remote.rules;
-                if (remote.timing) config.scanInterval = remote.timing.scanDelay || 1000;
+                if (remote.timing) {
+                    config.scanInterval = remote.timing.scanDelay || 1000;
+                    config.restPeriod = remote.timing.restPeriod || 7000;
+                }
                 state.pendingStats = {};
                 return;
             } catch (e) {
@@ -50,7 +62,8 @@
     // 2. Intelligent Click Engine — scan buttons in document + iframes
     function findButtonsRecursive(root, results = []) {
         try {
-            const buttons = root.querySelectorAll('button:not([disabled])');
+            // VS Code renders some dialog buttons as <a class="monaco-button">
+            const buttons = root.querySelectorAll('button:not([disabled]), a.monaco-button:not(.disabled)');
             for (const btn of buttons) {
                 results.push(btn);
             }
@@ -68,20 +81,26 @@
     function executeAutomation() {
         if (!config.active) return;
 
+        if (!Array.isArray(config.rules)) return;
+
         const buttons = findButtonsRecursive(document);
+        const now = Date.now();
         for (const btn of buttons) {
             if (state.clickedElements.has(btn)) continue;
 
-            const text = (btn.innerText || btn.textContent || '').trim();
-            const matchedRule = config.rules.find(rule =>
-                text === rule || text.includes(rule)
-            );
+            const text = normalizeLabel(btn.innerText || btn.textContent);
+            if (!text) continue;
+            const matchedRule = config.rules.find(rule => text === normalizeLabel(rule));
 
             if (matchedRule) {
                 if (btn.closest('.monaco-editor')) continue;
+                // Cooldown: UI re-renders create fresh elements with the same
+                // label — don't rapid-fire the same rule within restPeriod.
+                if (now - (state.lastClickAt[matchedRule] || 0) < (config.restPeriod || 7000)) continue;
 
                 btn.click();
                 state.clickedElements.add(btn);
+                state.lastClickAt[matchedRule] = now;
                 state.pendingStats[matchedRule] = (state.pendingStats[matchedRule] || 0) + 1;
                 logToHost({ type: 'auto-click', label: matchedRule });
             }

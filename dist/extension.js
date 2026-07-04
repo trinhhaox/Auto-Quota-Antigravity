@@ -253,7 +253,7 @@ var QuotaService = class {
           "Authorization": `Bearer ${accessToken}`,
           "anthropic-beta": "oauth-2025-04-20",
           "Content-Type": "application/json",
-          "User-Agent": "auto-quota-antigravity/1.6.0"
+          "User-Agent": "auto-quota-antigravity/1.7.0"
         },
         timeout: 1e4
       };

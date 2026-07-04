@@ -496,3 +496,67 @@ button#settings-btn:hover {
     margin-top: 3px;
     opacity: 0.65;
 }
+
+/* Automation Suite additions: action counter, per-rule badges, activity feed */
+.total-actions {
+    float: right;
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--ui-subtle);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.rule-badge {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    font-size: 8px;
+    font-weight: 700;
+    color: var(--ui-muted);
+    background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+    border-radius: 999px;
+    padding: 1px 5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.automation-card.active .rule-badge {
+    color: var(--vscode-foreground);
+}
+
+.activity-feed {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
+}
+
+.activity-title {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ui-subtle);
+    margin-bottom: 5px;
+}
+
+.activity-row {
+    display: flex;
+    gap: 8px;
+    font-size: 10px;
+    padding: 2px 0;
+    min-width: 0;
+}
+
+.activity-ts {
+    color: var(--ui-subtle);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.activity-ref {
+    color: var(--ui-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

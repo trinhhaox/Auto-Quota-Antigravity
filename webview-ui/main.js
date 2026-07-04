@@ -145,19 +145,40 @@ function renderAutoClick(config) {
         document.getElementById('app').appendChild(container);
     }
 
+    // Full rule set — must cover every default rule the host ships,
+    // otherwise some rules can never be toggled off from the UI.
     const rules = [
         { id: 'Run', label: 'Run' },
         { id: 'Allow', label: 'Allow' },
         { id: 'Accept', label: 'Accept' },
         { id: 'Always Allow', label: 'Always Allow' },
+        { id: 'Allow Once', label: 'Allow Once' },
         { id: 'Retry', label: 'Retry' },
+        { id: 'Continue', label: 'Continue' },
         { id: 'Keep Waiting', label: 'Keep Waiting' },
         { id: 'Accept all', label: 'Accept All' }
     ];
 
+    const metrics = config.metrics || {};
+    const totalActions = config.total_actions || 0;
+    const logs = Array.isArray(config.logs) ? config.logs.slice(0, 5) : [];
+
+    const activityHtml = logs.length > 0
+        ? `<div class="activity-feed">
+                <div class="activity-title">Recent activity</div>
+                ${logs.map(l => `
+                    <div class="activity-row">
+                        <span class="activity-ts">${escapeHtml(l.ts || '')}</span>
+                        <span class="activity-ref">${escapeHtml(l.ref || l.act || '')}</span>
+                    </div>`).join('')}
+           </div>`
+        : '';
+
     container.innerHTML = `
-        <div class="section-title">Automation Suite</div>
-        
+        <div class="section-title">Automation Suite
+            <span class="total-actions" title="Total automated actions">${totalActions} actions</span>
+        </div>
+
         <div class="power-row">
             <span class="power-label">Automation System</span>
             <label class="switch">
@@ -171,15 +192,18 @@ function renderAutoClick(config) {
         const rulesList = Array.isArray(config.rules) ? config.rules : [];
         const isRuleOn = rulesList.includes(rule.id);
         const isActuallyActive = config.active && isRuleOn;
+        const count = metrics[rule.id] || 0;
         return `
-                    <div class="automation-card ${isActuallyActive ? 'active' : ''} ${!config.active ? 'disabled' : ''}" data-rule="${rule.id}">
+                    <div class="automation-card ${isActuallyActive ? 'active' : ''} ${!config.active ? 'disabled' : ''}" data-rule="${escapeHtml(rule.id)}">
                         <div class="glow-ring"></div>
+                        ${count > 0 ? `<span class="rule-badge">${count > 999 ? '999+' : count}</span>` : ''}
                         <div class="automation-label">${rule.label}</div>
                         <div class="automation-status">${isActuallyActive ? 'Active' : (config.active ? 'Idle' : 'Paused')}</div>
                     </div>
                 `;
     }).join('')}
         </div>
+        ${activityHtml}
     `;
 
     // Event delegation — single listener, no re-registration leak

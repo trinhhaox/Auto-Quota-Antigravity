@@ -1,5 +1,17 @@
 # Changelog - AG Manager
 
+## [1.7.0] - 2026-07-05
+
+### Automation Suite — Safety Fix & Upgrades
+- **Safe rule matching (critical):** buttons are now matched by normalized EXACT label instead of substring. Previously rule "Allow" also matched the "Don't Allow" button — the automation could click the opposite of what you intended. Normalization strips keyboard-shortcut hints ("Accept all (⌘⏎)" still matches "Accept all").
+- **Click cooldown:** the same rule won't fire more than once per rest period (7s) even when the UI re-renders fresh button elements.
+- **Wider coverage:** scans `a.monaco-button` dialog buttons in addition to `<button>` elements.
+- **Complete rule grid:** added missing "Continue" and "Allow Once" cards — these default rules were active but impossible to toggle from the UI.
+- **Activity visibility:** per-rule click-count badges, total actions counter, and a "Recent activity" feed (last 5 automated clicks) — this data was always collected but never displayed.
+
+### Verified
+- End-to-end bridge test on live IDE: heartbeat auth (401 without / 200 with token), config sync, log POST, 400/404 error paths.
+
 ## [1.6.0] - 2026-07-05
 
 ### Unified Quota Semantics
