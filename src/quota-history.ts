@@ -7,7 +7,9 @@ import { DashboardData, HistoryEntry, QuotaInfo } from './types';
  * (~24h of data at the default 5-minute refresh interval).
  */
 
-const STORE_KEY = 'quota_history';
+// v2: Claude/Codex values switched from used% to remaining% — old entries
+// would render inverted sparklines, so start a fresh store.
+const STORE_KEY = 'quota_history_v2';
 const MAX_ENTRIES = 288;
 const MIN_GAP_MS = 4 * 60 * 1000;
 

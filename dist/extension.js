@@ -107,7 +107,7 @@ function extractLatestRateLimits(content) {
 function toQuota(win, label, color) {
   const used = Number(win?.used_percent);
   if (!isFinite(used)) return null;
-  const pct = Math.max(0, Math.min(100, used));
+  const pct = 100 - Math.max(0, Math.min(100, used));
   let resetTime = "";
   let absResetTime = "";
   let secs = Number(win?.resets_in_seconds);
@@ -128,8 +128,7 @@ function toQuota(win, label, color) {
     resetTime,
     absResetTime,
     themeColor: color,
-    style: "fluid",
-    direction: "up"
+    style: "fluid"
   };
 }
 function readCodexRateLimits() {
@@ -254,7 +253,7 @@ var QuotaService = class {
           "Authorization": `Bearer ${accessToken}`,
           "anthropic-beta": "oauth-2025-04-20",
           "Content-Type": "application/json",
-          "User-Agent": "auto-quota-antigravity/1.5.0"
+          "User-Agent": "auto-quota-antigravity/1.6.0"
         },
         timeout: 1e4
       };
@@ -309,17 +308,17 @@ var QuotaService = class {
     };
     const pushQuota = (data, label, color, defaultReset) => {
       if (!data) return;
-      const pct = Math.max(0, Math.min(100, Number(data.utilization || 0)));
+      const used = Math.max(0, Math.min(100, Number(data.utilization || 0)));
+      const remaining = 100 - used;
       const { resetLabel, absLabel } = parseResetTime(data.resets_at);
       quotas.push({
         label,
-        remaining: pct,
-        displayValue: `${Math.round(pct)}%`,
+        remaining,
+        displayValue: `${Math.round(remaining)}%`,
         resetTime: resetLabel || defaultReset,
         absResetTime: absLabel,
         themeColor: color,
-        style: "fluid",
-        direction: "up"
+        style: "fluid"
       });
     };
     if (usagePeriod === "5-hour" || usagePeriod === "both") {
@@ -670,8 +669,7 @@ var QuotaService = class {
             displayValue: model,
             resetTime: "",
             themeColor: "#69F0AE",
-            style: "fluid",
-            direction: "up"
+            style: "fluid"
           }
         ],
         isAuthenticated: true
@@ -1191,25 +1189,22 @@ function formatTime(t) {
   const hMatch = t.match(/(\d+)h/);
   const mMatch = t.match(/(\d+)m/);
   if (!hMatch && !mMatch) return t;
-  let h = hMatch ? parseInt(hMatch[1]) : 0;
-  let m = mMatch ? parseInt(mMatch[1]) : 0;
+  const h = hMatch ? parseInt(hMatch[1]) : 0;
+  const m = mMatch ? parseInt(mMatch[1]) : 0;
   if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h ${m}m`;
-  return `0d ${h}h ${m}m`;
+  return `${h}h ${m}m`;
 }
-function getQuotaColor(pct, direction = "down") {
-  if (direction === "up") {
-    if (pct < 50) return { hex: "#10b981", dot: "\u{1F7E2}" };
-    if (pct < 80) return { hex: "#FFAB40", dot: "\u{1F7E0}" };
-    return { hex: "#ef4444", dot: "\u{1F534}" };
-  } else {
-    if (pct > 50) return { hex: "#10b981", dot: "\u{1F7E2}" };
-    if (pct > 20) return { hex: "#f59e0b", dot: "\u{1F7E1}" };
-    return { hex: "#ef4444", dot: "\u{1F534}" };
-  }
+function getQuotaColor(pct) {
+  if (pct > 50) return { hex: "#10b981", dot: "\u{1F7E2}" };
+  if (pct > 20) return { hex: "#f59e0b", dot: "\u{1F7E1}" };
+  return { hex: "#ef4444", dot: "\u{1F534}" };
+}
+function isPercentQuota(q) {
+  return q.displayValue === void 0 || q.displayValue.endsWith("%");
 }
 
 // src/quota-history.ts
-var STORE_KEY = "quota_history";
+var STORE_KEY = "quota_history_v2";
 var MAX_ENTRIES = 288;
 var MIN_GAP_MS = 4 * 60 * 1e3;
 var ctx = null;
@@ -1377,7 +1372,8 @@ function buildTooltipSVG(data) {
     currentY += groupHeaderHeight;
     quotas.forEach((q) => {
       const pct = Math.round(q.remaining);
-      const color = getQuotaColor(pct, q.direction || "down");
+      const isPercent = isPercentQuota(q);
+      const color = isPercent ? getQuotaColor(pct) : { hex: "#6B7280", dot: "" };
       const time = formatTime(q.resetTime);
       contentHtml += `<rect x="${padding - 5}" y="${currentY}" width="${width - padding * 2 + 10}" height="${rowHeight - 4}" rx="6" fill="#FFFFFF" fill-opacity="0.03"/>`;
       contentHtml += `<circle cx="${padding + 8}" cy="${currentY + 13}" r="3.5" fill="${color.hex}"/>`;
@@ -1385,17 +1381,18 @@ function buildTooltipSVG(data) {
       contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="600" fill="#9CA3AF">${escapeXml(cleanName)}</text>`;
       const barX = 180;
       const barWidth = 60;
-      if (q.style === "fluid") {
+      if (!isPercent) {
+      } else if (q.style === "fluid") {
         const fillWidth = pct / 100 * barWidth;
         contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${barWidth}" height="4" rx="2" fill="#FFFFFF" fill-opacity="0.1"/>`;
-        contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${fillWidth}" height="4" rx="2" fill="${q.themeColor || "#4B5563"}" fill-opacity="0.9"/>`;
+        contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${fillWidth}" height="4" rx="2" fill="${color.hex}" fill-opacity="0.9"/>`;
       } else {
         const segWidth = 10;
         const segGap = 2;
         const filled = Math.min(5, Math.ceil(pct / 20));
         for (let i = 0; i < 5; i++) {
           const opacity = i < filled ? 0.9 : 0.15;
-          contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 12}" width="${segWidth}" height="4" rx="1" fill="${q.themeColor || "#4B5563"}" fill-opacity="${opacity}"/>`;
+          contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 12}" width="${segWidth}" height="4" rx="1" fill="${color.hex}" fill-opacity="${opacity}"/>`;
         }
       }
       const pctX = 250;
@@ -1443,19 +1440,15 @@ function refreshStatusBar() {
       segments.push({ text: `${dot} ${shortName} ${Math.round(avg)}%`, dot, health: avg });
     }
   }
-  const pushService = (name2, status, fallbackDir) => {
+  const pushService = (name2, status) => {
     if (!status?.isAuthenticated || !status.quotas?.length) return;
-    const q = status.quotas[0];
-    const dir = q.direction || fallbackDir;
-    const color = getQuotaColor(q.remaining, dir);
-    segments.push({
-      text: `${name2} ${color.dot}`,
-      dot: color.dot,
-      health: dir === "up" ? 100 - q.remaining : q.remaining
-    });
+    const q = status.quotas.find(isPercentQuota);
+    if (!q) return;
+    const color = getQuotaColor(q.remaining);
+    segments.push({ text: `${name2} ${color.dot}`, dot: color.dot, health: q.remaining });
   };
-  pushService("Claude", latestQuotaData.claude, "up");
-  pushService("Codex", latestQuotaData.codex, "down");
+  pushService("Claude", latestQuotaData.claude);
+  pushService("Codex", latestQuotaData.codex);
   const mode = vscode5.workspace.getConfiguration("sqm").get("statusBar.mode") || "full";
   let text = "Auto Quota Antigravity";
   if (segments.length > 0) {
@@ -1517,16 +1510,15 @@ function checkNotifications(data) {
   const checkQuota = (serviceName, quotas) => {
     if (!quotas) return;
     quotas.forEach((q) => {
+      if (!isPercentQuota(q)) return;
       const modelKey = `${serviceName}-${q.label}`;
-      const isUp = q.direction === "up";
       const pct = Math.round(q.remaining);
-      const isUnhealthy = isUp ? pct >= 100 - threshold : pct <= threshold;
-      if (!isUnhealthy) {
+      if (pct > threshold) {
         notifiedModels.delete(modelKey);
         return;
       }
       if (notifiedModels.has(modelKey)) return;
-      const message = isUp ? `${serviceName} [${q.label}] usage is high (${pct}%).` : `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
+      const message = `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
       vscode5.window.showWarningMessage(message, "Dashboard").then((selection) => {
         if (selection === "Dashboard") {
           vscode5.commands.executeCommand("sqm.sidebar.focus");

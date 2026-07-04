@@ -1,3 +1,6 @@
+// All quotas use one rule: `remaining` counts DOWN from 100% (full) to 0% (exhausted).
+// Rows whose displayValue is not a percentage (e.g. Codex "Active Model") are
+// informational only and excluded from color/notification/history logic.
 export interface QuotaInfo {
     label: string;
     remaining: number;
@@ -6,7 +9,6 @@ export interface QuotaInfo {
     absResetTime?: string;
     displayValue?: string;
     style?: 'segmented' | 'fluid';
-    direction?: 'up' | 'down';
 }
 
 export interface UserStatus {

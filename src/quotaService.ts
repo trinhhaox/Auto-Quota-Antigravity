@@ -129,7 +129,7 @@ export class QuotaService {
                     'Authorization': `Bearer ${accessToken}`,
                     'anthropic-beta': 'oauth-2025-04-20',
                     'Content-Type': 'application/json',
-                    'User-Agent': 'auto-quota-antigravity/1.5.0'
+                    'User-Agent': 'auto-quota-antigravity/1.6.0'
                 },
                 timeout: 10000
             };
@@ -185,17 +185,19 @@ export class QuotaService {
 
         const pushQuota = (data: any, label: string, color: string, defaultReset: string) => {
             if (!data) return;
-            const pct = Math.max(0, Math.min(100, Number(data.utilization || 0)));
+            // API reports utilization (used %) — convert to remaining so every
+            // service counts down 100% → 0% under the same color rule.
+            const used = Math.max(0, Math.min(100, Number(data.utilization || 0)));
+            const remaining = 100 - used;
             const { resetLabel, absLabel } = parseResetTime(data.resets_at);
             quotas.push({
                 label,
-                remaining: pct,
-                displayValue: `${Math.round(pct)}%`,
+                remaining,
+                displayValue: `${Math.round(remaining)}%`,
                 resetTime: resetLabel || defaultReset,
                 absResetTime: absLabel,
                 themeColor: color,
-                style: 'fluid',
-                direction: 'up'
+                style: 'fluid'
             });
         };
 
@@ -570,8 +572,7 @@ export class QuotaService {
                         displayValue: model,
                         resetTime: '',
                         themeColor: '#69F0AE',
-                        style: 'fluid',
-                        direction: 'up'
+                        style: 'fluid'
                     }
                 ],
                 isAuthenticated: true

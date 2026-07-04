@@ -89,11 +89,31 @@ function renderDashboard(data) {
 
 // [ADDED] Renders a single service group (title + user info row + gauges)
 // Uses exact same HTML/CSS structure as original Antigravity rendering
+// Unified color rule (matches src/utils.ts): remaining >50 green, >20 yellow, else red
+function healthColor(pct) {
+    if (pct > 50) return '#10b981';
+    if (pct > 20) return '#f59e0b';
+    return '#ef4444';
+}
+
+// Rows whose displayValue is not a percentage are informational (e.g. model name)
+function isPercentQuota(q) {
+    return q.displayValue === undefined || String(q.displayValue).endsWith('%');
+}
+
 function renderServiceGroup(title, status, serviceKey, history) {
     if (!status) { return ''; }
 
     const isAuthenticated = status.isAuthenticated !== false; // true if undefined (backward compat)
     const infoLine = `${escapeHtml(status.tier)} &bull; ${escapeHtml(status.email)}`;
+
+    // Group status dot = worst remaining % across percentage rows
+    const pctRows = (status.quotas || []).filter(isPercentQuota);
+    let dotHtml = '';
+    if (isAuthenticated && !status.error && pctRows.length > 0) {
+        const worst = Math.min(...pctRows.map(q => q.remaining));
+        dotHtml = `<span class="group-dot" style="background:${healthColor(worst)}"></span>`;
+    }
 
     let gaugesHtml = '';
     if (status.error) {
@@ -108,7 +128,7 @@ function renderServiceGroup(title, status, serviceKey, history) {
 
     return `
         <div class="service-group">
-            <div class="group-header">${escapeHtml(title)}</div>
+            <div class="group-header">${dotHtml}<span>${escapeHtml(title)}</span></div>
             <div class="service-info">${infoLine}</div>
             ${gaugesHtml}
         </div>
@@ -200,10 +220,10 @@ function formatTime(t) {
     const hMatch = t.match(/(\d+)h/);
     const mMatch = t.match(/(\d+)m/);
     if (!hMatch && !mMatch) return t;
-    let h = hMatch ? parseInt(hMatch[1]) : 0;
-    let m = mMatch ? parseInt(mMatch[1]) : 0;
+    const h = hMatch ? parseInt(hMatch[1]) : 0;
+    const m = mMatch ? parseInt(mMatch[1]) : 0;
     if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h ${m}m`;
-    return `0d ${h}h ${m}m`;
+    return `${h}h ${m}m`;
 }
 
 // Extract the last N history points for one "Service-Label" key
@@ -235,24 +255,36 @@ function sparklineSvg(series, color) {
 
 function createGauge(quota, series) {
     const pct = Math.round(quota.remaining);
-
-    // [MODIFIED] User displayValue if provided (e.g. "23"), otherwise pct%
-    const centerText = quota.displayValue !== undefined ? quota.displayValue : `${pct}%`;
     const label = shortLabel(quota.label);
-    const time = formatTime(quota.resetTime);
+
+    // Informational rows (model name, etc.): plain label/value, no bar or spark
+    if (!isPercentQuota(quota)) {
+        return `
+            <div class="quota-row model-row">
+                <div class="quota-label">${escapeHtml(label)}</div>
+                <div class="quota-value model-value">${escapeHtml(quota.displayValue || '')}</div>
+            </div>
+        `;
+    }
+
+    const color = healthColor(pct);
+    const centerText = quota.displayValue !== undefined ? quota.displayValue : `${pct}%`;
+    const time = `${formatTime(quota.resetTime)} ${quota.absResetTime || ''}`.trim();
     const barWidth = Math.max(0, Math.min(100, pct));
 
     return `
         <div class="quota-row">
             <div class="quota-main">
-                <div class="quota-label">${escapeHtml(label)}</div>
-                <div class="quota-time">${escapeHtml(time)}</div>
-                <div class="quota-bar">
-                    <div class="quota-bar-fill" style="width: ${barWidth}%; background-color: ${escapeHtml(quota.themeColor || '')};"></div>
+                <div class="quota-top">
+                    <span class="quota-label">${escapeHtml(label)}</span>
+                    <span class="quota-time">${escapeHtml(time)}</span>
                 </div>
-                ${sparklineSvg(series, quota.themeColor || '#888')}
+                <div class="quota-bar">
+                    <div class="quota-bar-fill" style="width: ${barWidth}%; background-color: ${color};"></div>
+                </div>
+                ${sparklineSvg(series, color)}
             </div>
-            <div class="quota-value">${escapeHtml(centerText)}</div>
+            <div class="quota-value" style="color: ${color};">${escapeHtml(centerText)}</div>
         </div>
     `;
 }

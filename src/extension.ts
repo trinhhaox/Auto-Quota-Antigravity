@@ -4,7 +4,7 @@ import { SidebarProvider } from './sidebarProvider';
 import { AutomationService } from './automationService';
 import { checkForUpdates } from './updater';
 import { DashboardData, ModelGroup, QuotaInfo, UserStatus } from './types';
-import { formatTime, getQuotaColor } from './utils';
+import { formatTime, getQuotaColor, isPercentQuota } from './utils';
 import { initQuotaHistory, recordQuotaSnapshot, getQuotaHistory } from './quota-history';
 
 let statusBarItem: vscode.StatusBarItem;
@@ -169,7 +169,9 @@ function buildTooltipSVG(data: DashboardData): string {
 
         quotas.forEach((q) => {
             const pct = Math.round(q.remaining);
-            const color = getQuotaColor(pct, q.direction || 'down');
+            const isPercent = isPercentQuota(q);
+            // Text-only rows (e.g. active model name) get a neutral dot, no bar
+            const color = isPercent ? getQuotaColor(pct) : { hex: '#6B7280', dot: '' };
             const time = formatTime(q.resetTime);
 
             // Row Highlight
@@ -186,11 +188,13 @@ function buildTooltipSVG(data: DashboardData): string {
             const barX = 180;
             const barWidth = 60; // 5 * 10 + 4 * 2 = 58 approx, let's use 60
 
-            if (q.style === 'fluid') {
-                // Fluid HP Bar
+            if (!isPercent) {
+                // No bar for informational rows
+            } else if (q.style === 'fluid') {
+                // Fluid HP Bar — colored by the unified health rule
                 const fillWidth = (pct / 100) * barWidth;
                 contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${barWidth}" height="4" rx="2" fill="#FFFFFF" fill-opacity="0.1"/>`;
-                contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${fillWidth}" height="4" rx="2" fill="${q.themeColor || '#4B5563'}" fill-opacity="0.9"/>`;
+                contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${fillWidth}" height="4" rx="2" fill="${color.hex}" fill-opacity="0.9"/>`;
             } else {
                 // Segmented Bar (Default for Antigravity)
                 const segWidth = 10;
@@ -198,7 +202,7 @@ function buildTooltipSVG(data: DashboardData): string {
                 const filled = Math.min(5, Math.ceil(pct / 20));
                 for (let i = 0; i < 5; i++) {
                     const opacity = i < filled ? 0.9 : 0.15;
-                    contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 12}" width="${segWidth}" height="4" rx="1" fill="${q.themeColor || '#4B5563'}" fill-opacity="${opacity}"/>`;
+                    contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 12}" width="${segWidth}" height="4" rx="1" fill="${color.hex}" fill-opacity="${opacity}"/>`;
                 }
             }
 
@@ -265,20 +269,16 @@ function refreshStatusBar() {
         }
     }
 
-    // 2. Claude / Codex (if authenticated)
-    const pushService = (name: string, status: UserStatus | null | undefined, fallbackDir: 'up' | 'down') => {
+    // 2. Claude / Codex (if authenticated) — first percentage row drives the dot
+    const pushService = (name: string, status: UserStatus | null | undefined) => {
         if (!status?.isAuthenticated || !status.quotas?.length) return;
-        const q = status.quotas[0];
-        const dir = q.direction || fallbackDir;
-        const color = getQuotaColor(q.remaining, dir);
-        segments.push({
-            text: `${name} ${color.dot}`,
-            dot: color.dot,
-            health: dir === 'up' ? 100 - q.remaining : q.remaining
-        });
+        const q = status.quotas.find(isPercentQuota);
+        if (!q) return;
+        const color = getQuotaColor(q.remaining);
+        segments.push({ text: `${name} ${color.dot}`, dot: color.dot, health: q.remaining });
     };
-    pushService('Claude', latestQuotaData.claude, 'up');
-    pushService('Codex', latestQuotaData.codex, 'down');
+    pushService('Claude', latestQuotaData.claude);
+    pushService('Codex', latestQuotaData.codex);
 
     const mode = vscode.workspace.getConfiguration('sqm').get<string>('statusBar.mode') || 'full';
     let text = 'Auto Quota Antigravity';
@@ -350,19 +350,17 @@ function triggerRefresh() {
 function checkNotifications(data: DashboardData) {
     const config = vscode.workspace.getConfiguration("sqm");
     if (!config.get<boolean>("enableNotifications")) return;
-    // User-tunable: warn when remaining drops to N% (or usage rises to 100-N%)
+    // User-tunable: warn when remaining quota drops to N%
     const threshold = Math.max(1, Math.min(90, config.get<number>("notifyThreshold") || 20));
 
     const checkQuota = (serviceName: string, quotas: QuotaInfo[]) => {
         if (!quotas) return;
         quotas.forEach(q => {
+            if (!isPercentQuota(q)) return; // informational rows never notify
             const modelKey = `${serviceName}-${q.label}`;
-            const isUp = q.direction === 'up';
             const pct = Math.round(q.remaining);
 
-            const isUnhealthy = isUp ? pct >= 100 - threshold : pct <= threshold;
-
-            if (!isUnhealthy) {
+            if (pct > threshold) {
                 // Quota recovered — allow re-notification if it drops again
                 notifiedModels.delete(modelKey);
                 return;
@@ -370,9 +368,7 @@ function checkNotifications(data: DashboardData) {
 
             if (notifiedModels.has(modelKey)) return;
 
-            const message = isUp
-                ? `${serviceName} [${q.label}] usage is high (${pct}%).`
-                : `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
+            const message = `${serviceName} [${q.label}] quota is low (${pct}% remaining).`;
 
             vscode.window.showWarningMessage(message, "Dashboard").then(selection => {
                 if (selection === "Dashboard") {

@@ -2,7 +2,7 @@
     "name": "auto-quota-antigravity",
     "displayName": "Auto Quota Antigravity",
     "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "publisher": "BiViPi",
     "author": {
         "name": "BiViPi",
@@ -83,7 +83,7 @@
                     "default": 20,
                     "minimum": 1,
                     "maximum": 90,
-                    "description": "Notify when remaining quota drops to this percentage (or usage rises above 100 minus this percentage)."
+                    "description": "Notify when remaining quota drops to this percentage."
                 },
                 "sqm.statusBar.mode": {
                     "type": "string",

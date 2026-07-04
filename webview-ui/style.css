@@ -111,15 +111,24 @@ button#refresh-btn:hover {
     padding: 8px 10px;
     border: 1px solid var(--ui-border);
     border-radius: 8px;
-    background: transparent;
+    background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
 }
 
 .quota-main {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
     min-width: 0;
     flex: 1;
+}
+
+/* Label + reset countdown on one line */
+.quota-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
 }
 
 .quota-label {
@@ -134,19 +143,22 @@ button#refresh-btn:hover {
 .quota-time {
     font-size: 9px;
     color: var(--ui-subtle);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
 .quota-value {
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 700;
     color: var(--vscode-foreground);
-    min-width: 36px;
+    min-width: 42px;
     text-align: right;
+    font-variant-numeric: tabular-nums;
 }
 
 .quota-bar {
     position: relative;
-    height: 4px;
+    height: 5px;
     background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
     border-radius: 999px;
     overflow: hidden;
@@ -158,6 +170,23 @@ button#refresh-btn:hover {
     top: 0;
     bottom: 0;
     border-radius: 999px;
+    transition: width 0.4s ease;
+}
+
+/* Informational rows (e.g. Codex active model) */
+.model-row {
+    padding: 6px 10px;
+}
+
+.model-value {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--ui-muted);
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 60%;
 }
 
 /* States */
@@ -170,26 +199,42 @@ button#refresh-btn:hover {
     line-height: 1.6;
 }
 
-/* Service Group */
+/* Service Group — card with status dot in header */
 .service-group {
-    margin-bottom: 16px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+    margin-bottom: 12px;
+    padding: 10px;
+    border: 1px solid var(--ui-border);
+    border-radius: 10px;
+    background: var(--ui-surface);
 }
 
 .group-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 10px;
     font-weight: 700;
-    color: var(--ui-muted);
+    color: var(--vscode-foreground);
     letter-spacing: 0.08em;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
     text-transform: uppercase;
+    opacity: 0.9;
+}
+
+.group-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
 }
 
 .service-info {
     font-size: 10px;
     color: var(--ui-subtle);
     margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Automation Suite */

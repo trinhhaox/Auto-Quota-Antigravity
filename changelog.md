@@ -1,5 +1,18 @@
 # Changelog - AG Manager
 
+## [1.6.0] - 2026-07-05
+
+### Unified Quota Semantics
+- **One rule for every service:** Claude Code and Codex quotas now count DOWN from 100% (full) to 0% (exhausted), exactly like Antigravity. No more mixed "usage up" vs "remaining down" displays.
+- **One color rule everywhere:** remaining >50% green, >20% yellow, otherwise red — applied consistently to sidebar bars, values, group dots, status bar dots, tooltip bars, and notifications.
+- **Informational rows** (Codex "Active Model") are excluded from color/notification/history logic and render as plain label/value rows.
+
+### Dashboard Redesign
+- Service groups are now cards with a health status dot in the header (worst quota drives the color).
+- Quota rows: label + reset countdown (incl. absolute time, e.g. "1h 47m (03h22)") on one line, thicker animated health-colored bar, bold colored percentage.
+- Sparklines now use the health color; history store reset (v2) due to semantics change.
+- Removed the "0d" prefix from sub-day reset countdowns.
+
 ## [1.5.0] - 2026-07-05
 
 ### Bug Fixes

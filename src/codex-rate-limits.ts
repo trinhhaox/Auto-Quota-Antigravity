@@ -64,7 +64,8 @@ function extractLatestRateLimits(content: string): any | null {
 function toQuota(win: any, label: string, color: string): QuotaInfo | null {
     const used = Number(win?.used_percent);
     if (!isFinite(used)) return null;
-    const pct = Math.max(0, Math.min(100, used));
+    // Logs report used % — convert to remaining (countdown 100% → 0%)
+    const pct = 100 - Math.max(0, Math.min(100, used));
 
     let resetTime = '';
     let absResetTime = '';
@@ -89,8 +90,7 @@ function toQuota(win: any, label: string, color: string): QuotaInfo | null {
         resetTime,
         absResetTime,
         themeColor: color,
-        style: 'fluid',
-        direction: 'up'
+        style: 'fluid'
     };
 }
 
