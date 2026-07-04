@@ -68,7 +68,13 @@ function toQuota(win: any, label: string, color: string): QuotaInfo | null {
 
     let resetTime = '';
     let absResetTime = '';
-    const secs = Number(win?.resets_in_seconds);
+    // Codex CLI versions vary: older logs use resets_in_seconds (relative),
+    // newer ones use resets_at (unix epoch seconds).
+    let secs = Number(win?.resets_in_seconds);
+    if (!isFinite(secs) || secs <= 0) {
+        const at = Number(win?.resets_at);
+        if (isFinite(at) && at > 0) secs = at - Math.floor(Date.now() / 1000);
+    }
     if (isFinite(secs) && secs > 0) {
         const mins = Math.floor(secs / 60);
         resetTime = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;

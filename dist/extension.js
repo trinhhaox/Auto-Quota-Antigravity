@@ -110,7 +110,11 @@ function toQuota(win, label, color) {
   const pct = Math.max(0, Math.min(100, used));
   let resetTime = "";
   let absResetTime = "";
-  const secs = Number(win?.resets_in_seconds);
+  let secs = Number(win?.resets_in_seconds);
+  if (!isFinite(secs) || secs <= 0) {
+    const at = Number(win?.resets_at);
+    if (isFinite(at) && at > 0) secs = at - Math.floor(Date.now() / 1e3);
+  }
   if (isFinite(secs) && secs > 0) {
     const mins = Math.floor(secs / 60);
     resetTime = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
