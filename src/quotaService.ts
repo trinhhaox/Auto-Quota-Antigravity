@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { QuotaInfo, UserStatus, DashboardData } from './types';
+import { readCodexRateLimits } from './codex-rate-limits';
 
 export { QuotaInfo, UserStatus, DashboardData };
 
@@ -128,7 +129,7 @@ export class QuotaService {
                     'Authorization': `Bearer ${accessToken}`,
                     'anthropic-beta': 'oauth-2025-04-20',
                     'Content-Type': 'application/json',
-                    'User-Agent': 'auto-quota-antigravity/1.4.0'
+                    'User-Agent': 'auto-quota-antigravity/1.5.0'
                 },
                 timeout: 10000
             };
@@ -325,7 +326,9 @@ export class QuotaService {
                 timeout: 5000
             };
 
-            return new Promise((resolve, reject) => {
+            // Await here so network failures hit the catch below — otherwise a
+            // rejected promise escapes to fetchDashboard() and the sidebar hangs.
+            return await new Promise<UserStatus>((resolve, reject) => {
                 const req = http.request(options, (res) => {
                     let data = '';
                     res.on('data', chunk => data += chunk);
@@ -340,7 +343,10 @@ export class QuotaService {
                 req.write(JSON.stringify({ wrapper_data: {} }));
                 req.end();
             });
-        } catch (e) {
+        } catch (e: any) {
+            // Server likely restarted on a new port — drop cached info so the
+            // next refresh re-discovers instead of failing forever.
+            this.log(`fetchStatus failed (${e?.message}), resetting server info`);
             this.serverInfo = null;
             return null;
         }
@@ -414,8 +420,10 @@ export class QuotaService {
                     const home = os.homedir();
                     for (const dir of [path.join(home, '.antigravity', 'extensions'), path.join(home, '.vscode', 'extensions')]) {
                         try {
+                            // On win32 execWithTimeout already runs commands inside
+                            // powershell.exe — no nested "powershell -Command" prefix needed.
                             const cmd = process.platform === 'win32'
-                                ? `powershell.exe -NoProfile -Command "Get-ChildItem -Path '${dir}' -Filter '${exeName}' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"`
+                                ? `Get-ChildItem -Path '${dir}' -Filter '${exeName}' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName`
                                 : `find "${dir}" -name "${exeName}" -type f 2>/dev/null | head -n 1`;
                             const { stdout } = await execWithTimeout(cmd, 6000);
                             if (stdout?.trim()) { binPath = stdout.trim(); break; }
@@ -426,7 +434,7 @@ export class QuotaService {
                 }
                 if (binPath) {
                     const cmd = process.platform === 'win32'
-                        ? `powershell.exe -NoProfile -Command "& '${binPath}' auth status --json"`
+                        ? `& '${binPath}' auth status --json`
                         : `"${binPath}" auth status --json`;
                     const { stdout } = await execWithTimeout(cmd, 6000);
                     authStatus = JSON.parse(stdout.trim());
@@ -546,19 +554,26 @@ export class QuotaService {
 
             this.log(`Codex: ${email} (${planType}), model: ${model}`);
             const tierDisplay = planType.charAt(0).toUpperCase() + planType.slice(1);
+
+            // Real usage from the newest Codex session log; falls back to
+            // showing just the active model when no fresh rate_limits exist.
+            const usageQuotas = readCodexRateLimits();
             return {
                 name: "Codex",
                 email,
                 tier: tierDisplay,
-                quotas: [{
-                    label: 'Active Model',
-                    remaining: 0,
-                    displayValue: model,
-                    resetTime: '',
-                    themeColor: '#69F0AE',
-                    style: 'fluid',
-                    direction: 'up'
-                }],
+                quotas: [
+                    ...usageQuotas,
+                    {
+                        label: 'Active Model',
+                        remaining: 0,
+                        displayValue: model,
+                        resetTime: '',
+                        themeColor: '#69F0AE',
+                        style: 'fluid',
+                        direction: 'up'
+                    }
+                ],
                 isAuthenticated: true
             };
         } catch (e: any) {

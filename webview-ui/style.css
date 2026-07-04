@@ -444,3 +444,10 @@ button#settings-btn:hover {
 .switch input:checked + .slider:before {
     transform: translateX(18px);
 }
+
+/* Mini history trend chart under each quota bar */
+.quota-spark {
+    display: block;
+    margin-top: 3px;
+    opacity: 0.65;
+}

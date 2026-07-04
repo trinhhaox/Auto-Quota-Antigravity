@@ -56,3 +56,9 @@ export interface ModelGroup {
     models: string[];
 }
 
+// One timestamped snapshot of all quota percentages, keyed "Service-Label"
+export interface HistoryEntry {
+    t: number;
+    v: Record<string, number>;
+}
+

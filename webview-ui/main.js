@@ -66,15 +66,18 @@ function renderDashboard(data) {
     // [ADDED] renderServiceGroup helper: renders a titled gauge group identical to Antigravity style
     let html = '';
     if (ag) {
-        html += renderServiceGroup('ANTIGRAVITY', ag);
+        html += renderServiceGroup('ANTIGRAVITY', ag, 'Antigravity', data.history);
     }
     if (data.claude) {
-        html += renderServiceGroup('CLAUDE CODE', data.claude);
+        html += renderServiceGroup('CLAUDE CODE', data.claude, 'Claude', data.history);
     }
     if (data.codex) {
-        html += renderServiceGroup('CODEX', data.codex);
+        html += renderServiceGroup('CODEX', data.codex, 'Codex', data.history);
     }
 
+    if (!html) {
+        html = '<p class="error-msg">No services detected.<br>Ensure Antigravity IDE is running, or sign in to Claude Code / Codex.</p>';
+    }
     document.getElementById('quota-list').innerHTML = html;
 
     if (data.autoClick) {
@@ -86,7 +89,7 @@ function renderDashboard(data) {
 
 // [ADDED] Renders a single service group (title + user info row + gauges)
 // Uses exact same HTML/CSS structure as original Antigravity rendering
-function renderServiceGroup(title, status) {
+function renderServiceGroup(title, status, serviceKey, history) {
     if (!status) { return ''; }
 
     const isAuthenticated = status.isAuthenticated !== false; // true if undefined (backward compat)
@@ -96,7 +99,9 @@ function renderServiceGroup(title, status) {
     if (status.error) {
         gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">${escapeHtml(status.error)}</p>`;
     } else if (isAuthenticated && status.quotas && status.quotas.length > 0) {
-        gaugesHtml = `<div class="gauge-grid">${status.quotas.map(q => createGauge(q)).join('')}</div>`;
+        gaugesHtml = `<div class="gauge-grid">${status.quotas.map(q =>
+            createGauge(q, historySeries(history, `${serviceKey}-${q.label}`))
+        ).join('')}</div>`;
     } else if (!isAuthenticated) {
         gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">${escapeHtml(status.email)}</p>`;
     }
@@ -201,7 +206,34 @@ function formatTime(t) {
     return `0d ${h}h ${m}m`;
 }
 
-function createGauge(quota) {
+// Extract the last N history points for one "Service-Label" key
+function historySeries(history, key) {
+    if (!Array.isArray(history)) return [];
+    const series = [];
+    for (const entry of history) {
+        if (entry && entry.v && typeof entry.v[key] === 'number') {
+            series.push(entry.v[key]);
+        }
+    }
+    return series.slice(-48); // ~4h at 5-min refresh
+}
+
+// Tiny inline trend chart rendered under the quota bar
+function sparklineSvg(series, color) {
+    if (!series || series.length < 3) return '';
+    const w = 96, h = 14;
+    const min = Math.min(...series);
+    const max = Math.max(...series);
+    const span = (max - min) || 1;
+    const pts = series.map((v, i) =>
+        `${((i / (series.length - 1)) * w).toFixed(1)},${(h - 2 - ((v - min) / span) * (h - 4)).toFixed(1)}`
+    ).join(' ');
+    return `<svg class="quota-spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+        <polyline points="${pts}" fill="none" stroke="${escapeHtml(color)}" stroke-width="1.5" stroke-opacity="0.8"/>
+    </svg>`;
+}
+
+function createGauge(quota, series) {
     const pct = Math.round(quota.remaining);
 
     // [MODIFIED] User displayValue if provided (e.g. "23"), otherwise pct%
@@ -218,6 +250,7 @@ function createGauge(quota) {
                 <div class="quota-bar">
                     <div class="quota-bar-fill" style="width: ${barWidth}%; background-color: ${escapeHtml(quota.themeColor || '')};"></div>
                 </div>
+                ${sparklineSvg(series, quota.themeColor || '#888')}
             </div>
             <div class="quota-value">${escapeHtml(centerText)}</div>
         </div>
@@ -252,6 +285,16 @@ function renderSettingsData(settings) {
             { value: 10, label: '10' }, { value: 15, label: '15' }, { value: 30, label: '30' }
         ]},
         { key: 'enableNotifications', label: 'Notifications', type: 'toggle' },
+        { key: 'notifyThreshold', label: 'Notify Threshold (%)', type: 'select', options: [
+            { value: 5, label: '5' }, { value: 10, label: '10' }, { value: 15, label: '15' },
+            { value: 20, label: '20' }, { value: 30, label: '30' }, { value: 40, label: '40' },
+            { value: 50, label: '50' }
+        ]},
+        { key: 'statusBar.mode', label: 'Status Bar', type: 'select', options: [
+            { value: 'full', label: 'Full' },
+            { value: 'compact', label: 'Compact' },
+            { value: 'dot', label: 'Dot only' }
+        ]},
     ];
 
     const panel = document.getElementById('settings-panel');
@@ -313,7 +356,7 @@ function renderSettingsData(settings) {
             } else {
                 let v = el.value.trim();
                 // Convert numeric selects
-                if (key === 'refreshInterval') v = parseInt(v);
+                if (key === 'refreshInterval' || key === 'notifyThreshold') v = parseInt(v);
                 result[key] = v;
             }
         });

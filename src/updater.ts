@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as https from 'https';
 
-const REPO_OWNER = 'trinhvanhao';
+const REPO_OWNER = 'trinhhaox';
 const REPO_NAME = 'Auto-Quota-Antigravity';
 const API_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
 

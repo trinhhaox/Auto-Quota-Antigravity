@@ -43,9 +43,111 @@ var https = __toESM(require("https"));
 var import_child_process = require("child_process");
 var import_util = require("util");
 var vscode = __toESM(require("vscode"));
+var fs2 = __toESM(require("fs"));
+var os2 = __toESM(require("os"));
+var path2 = __toESM(require("path"));
+
+// src/codex-rate-limits.ts
 var fs = __toESM(require("fs"));
-var os = __toESM(require("os"));
 var path = __toESM(require("path"));
+var os = __toESM(require("os"));
+var MAX_STALE_MS = 24 * 60 * 60 * 1e3;
+var TAIL_BYTES = 262144;
+function findNewestSessionFile(root) {
+  let newest = null;
+  const walk = (dir, depth) => {
+    if (depth > 4) return;
+    let entries2;
+    try {
+      entries2 = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries2) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(full, depth + 1);
+      } else if (e.name.endsWith(".jsonl")) {
+        try {
+          const mtime = fs.statSync(full).mtimeMs;
+          if (!newest || mtime > newest.mtime) newest = { file: full, mtime };
+        } catch {
+        }
+      }
+    }
+  };
+  walk(root, 0);
+  return newest;
+}
+function readTail(file, bytes) {
+  const fd = fs.openSync(file, "r");
+  try {
+    const size = fs.fstatSync(fd).size;
+    const len = Math.min(bytes, size);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    return buf.toString("utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+function extractLatestRateLimits(content) {
+  const lines = content.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('"rate_limits"')) continue;
+    try {
+      const obj = JSON.parse(lines[i]);
+      const rl = obj?.payload?.rate_limits || obj?.rate_limits;
+      if (rl?.primary || rl?.secondary) return rl;
+    } catch {
+    }
+  }
+  return null;
+}
+function toQuota(win, label, color) {
+  const used = Number(win?.used_percent);
+  if (!isFinite(used)) return null;
+  const pct = Math.max(0, Math.min(100, used));
+  let resetTime = "";
+  let absResetTime = "";
+  const secs = Number(win?.resets_in_seconds);
+  if (isFinite(secs) && secs > 0) {
+    const mins = Math.floor(secs / 60);
+    resetTime = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+    const resetDate = new Date(Date.now() + secs * 1e3);
+    absResetTime = `(${String(resetDate.getHours()).padStart(2, "0")}h${String(resetDate.getMinutes()).padStart(2, "0")})`;
+  }
+  return {
+    label,
+    remaining: pct,
+    displayValue: `${Math.round(pct)}%`,
+    resetTime,
+    absResetTime,
+    themeColor: color,
+    style: "fluid",
+    direction: "up"
+  };
+}
+function readCodexRateLimits() {
+  try {
+    const sessionsDir = path.join(os.homedir(), ".codex", "sessions");
+    if (!fs.existsSync(sessionsDir)) return [];
+    const newest = findNewestSessionFile(sessionsDir);
+    if (!newest || Date.now() - newest.mtime > MAX_STALE_MS) return [];
+    const rl = extractLatestRateLimits(readTail(newest.file, TAIL_BYTES));
+    if (!rl) return [];
+    const quotas = [];
+    const primary = toQuota(rl.primary, "Session (5h)", "#69F0AE");
+    const secondary = toQuota(rl.secondary, "Weekly", "#26A69A");
+    if (primary) quotas.push(primary);
+    if (secondary) quotas.push(secondary);
+    return quotas;
+  } catch {
+    return [];
+  }
+}
+
+// src/quotaService.ts
 var execAsync = (0, import_util.promisify)(import_child_process.exec);
 async function execWithTimeout(command, timeoutMs = 8e3) {
   return new Promise((resolve, reject) => {
@@ -91,9 +193,9 @@ var QuotaService = class {
     let displayName = "";
     let subscriptionType = "";
     try {
-      const claudeConfigPath = path.join(os.homedir(), ".claude.json");
-      if (fs.existsSync(claudeConfigPath)) {
-        const raw = fs.readFileSync(claudeConfigPath, "utf8");
+      const claudeConfigPath = path2.join(os2.homedir(), ".claude.json");
+      if (fs2.existsSync(claudeConfigPath)) {
+        const raw = fs2.readFileSync(claudeConfigPath, "utf8");
         const parsed = JSON.parse(raw);
         const oauth = parsed?.oauthAccount;
         if (oauth) {
@@ -123,9 +225,9 @@ var QuotaService = class {
           return { accessToken: oauth.accessToken, expiresAt: oauth.expiresAt || 0 };
         }
       } else {
-        const credPath = path.join(os.homedir(), ".claude", ".credentials.json");
-        if (fs.existsSync(credPath)) {
-          const raw = fs.readFileSync(credPath, "utf8");
+        const credPath = path2.join(os2.homedir(), ".claude", ".credentials.json");
+        if (fs2.existsSync(credPath)) {
+          const raw = fs2.readFileSync(credPath, "utf8");
           const creds = JSON.parse(raw);
           const oauth = creds?.claudeAiOauth;
           if (oauth?.accessToken) {
@@ -148,7 +250,7 @@ var QuotaService = class {
           "Authorization": `Bearer ${accessToken}`,
           "anthropic-beta": "oauth-2025-04-20",
           "Content-Type": "application/json",
-          "User-Agent": "auto-quota-antigravity/1.4.0"
+          "User-Agent": "auto-quota-antigravity/1.5.0"
         },
         timeout: 1e4
       };
@@ -338,7 +440,7 @@ var QuotaService = class {
         },
         timeout: 5e3
       };
-      return new Promise((resolve, reject) => {
+      return await new Promise((resolve, reject) => {
         const req = http.request(options, (res) => {
           let data = "";
           res.on("data", (chunk) => data += chunk);
@@ -363,6 +465,7 @@ var QuotaService = class {
         req.end();
       });
     } catch (e) {
+      this.log(`fetchStatus failed (${e?.message}), resetting server info`);
       this.serverInfo = null;
       return null;
     }
@@ -422,14 +525,14 @@ var QuotaService = class {
         const exeName = process.platform === "win32" ? "claude.exe" : "claude";
         const ext = vscode.extensions.getExtension("anthropic.claude-code");
         if (ext) {
-          const candidate = path.join(ext.extensionPath, "resources", "native-binary", exeName);
-          if (fs.existsSync(candidate)) binPath = candidate;
+          const candidate = path2.join(ext.extensionPath, "resources", "native-binary", exeName);
+          if (fs2.existsSync(candidate)) binPath = candidate;
         }
         if (!binPath) {
-          const home = os.homedir();
-          for (const dir of [path.join(home, ".antigravity", "extensions"), path.join(home, ".vscode", "extensions")]) {
+          const home = os2.homedir();
+          for (const dir of [path2.join(home, ".antigravity", "extensions"), path2.join(home, ".vscode", "extensions")]) {
             try {
-              const cmd = process.platform === "win32" ? `powershell.exe -NoProfile -Command "Get-ChildItem -Path '${dir}' -Filter '${exeName}' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"` : `find "${dir}" -name "${exeName}" -type f 2>/dev/null | head -n 1`;
+              const cmd = process.platform === "win32" ? `Get-ChildItem -Path '${dir}' -Filter '${exeName}' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName` : `find "${dir}" -name "${exeName}" -type f 2>/dev/null | head -n 1`;
               const { stdout } = await execWithTimeout(cmd, 6e3);
               if (stdout?.trim()) {
                 binPath = stdout.trim();
@@ -441,7 +544,7 @@ var QuotaService = class {
           }
         }
         if (binPath) {
-          const cmd = process.platform === "win32" ? `powershell.exe -NoProfile -Command "& '${binPath}' auth status --json"` : `"${binPath}" auth status --json`;
+          const cmd = process.platform === "win32" ? `& '${binPath}' auth status --json` : `"${binPath}" auth status --json`;
           const { stdout } = await execWithTimeout(cmd, 6e3);
           authStatus = JSON.parse(stdout.trim());
         }
@@ -510,21 +613,21 @@ var QuotaService = class {
   async _fetchCodexStatusImpl() {
     this.log("Fetching Codex Status...");
     try {
-      const home = os.homedir();
-      const authFile = path.join(home, ".codex", "auth.json");
-      const configFile = path.join(home, ".codex", "config.toml");
+      const home = os2.homedir();
+      const authFile = path2.join(home, ".codex", "auth.json");
+      const configFile = path2.join(home, ".codex", "config.toml");
       const ext = vscode.extensions.getExtension("openai.chatgpt");
-      if (!ext && !fs.existsSync(authFile)) {
+      if (!ext && !fs2.existsSync(authFile)) {
         return { name: "Codex", email: "Not installed", tier: "N/A", quotas: [], isAuthenticated: false };
       }
-      if (!fs.existsSync(authFile)) {
+      if (!fs2.existsSync(authFile)) {
         return { name: "Codex", email: "Not logged in", tier: "Guest", quotas: [], isAuthenticated: false };
       }
       let email = "";
       let planType = "Free";
       let model = "Unknown";
       try {
-        const authData = JSON.parse(fs.readFileSync(authFile, "utf8"));
+        const authData = JSON.parse(fs2.readFileSync(authFile, "utf8"));
         const idToken = authData?.tokens?.id_token;
         if (idToken) {
           const parts = idToken.split(".");
@@ -540,8 +643,8 @@ var QuotaService = class {
         this.log(`Codex JWT decode failed: ${e?.message}`);
       }
       try {
-        if (fs.existsSync(configFile)) {
-          const configRaw = fs.readFileSync(configFile, "utf8");
+        if (fs2.existsSync(configFile)) {
+          const configRaw = fs2.readFileSync(configFile, "utf8");
           const modelMatch = configRaw.match(/^model\s*=\s*"([^"]+)"/m);
           if (modelMatch) model = modelMatch[1];
         }
@@ -550,19 +653,23 @@ var QuotaService = class {
       }
       this.log(`Codex: ${email} (${planType}), model: ${model}`);
       const tierDisplay = planType.charAt(0).toUpperCase() + planType.slice(1);
+      const usageQuotas = readCodexRateLimits();
       return {
         name: "Codex",
         email,
         tier: tierDisplay,
-        quotas: [{
-          label: "Active Model",
-          remaining: 0,
-          displayValue: model,
-          resetTime: "",
-          themeColor: "#69F0AE",
-          style: "fluid",
-          direction: "up"
-        }],
+        quotas: [
+          ...usageQuotas,
+          {
+            label: "Active Model",
+            remaining: 0,
+            displayValue: model,
+            resetTime: "",
+            themeColor: "#69F0AE",
+            style: "fluid",
+            direction: "up"
+          }
+        ],
         isAuthenticated: true
       };
     } catch (e) {
@@ -638,6 +745,8 @@ var SidebarProvider = class _SidebarProvider {
         "claude.usagePeriod": sqm.get("claude.usagePeriod") || "both",
         "refreshInterval": sqm.get("refreshInterval") || 5,
         "enableNotifications": sqm.get("enableNotifications") !== false,
+        "notifyThreshold": sqm.get("notifyThreshold") ?? 20,
+        "statusBar.mode": sqm.get("statusBar.mode") || "full",
         "automation.enabled": ag.get("automation.enabled") !== false
       }
     });
@@ -692,9 +801,9 @@ var SidebarProvider = class _SidebarProvider {
 
 // src/automationService.ts
 var vscode3 = __toESM(require("vscode"));
-var fs2 = __toESM(require("fs"));
-var path2 = __toESM(require("path"));
-var os2 = __toESM(require("os"));
+var fs3 = __toESM(require("fs"));
+var path3 = __toESM(require("path"));
+var os3 = __toESM(require("os"));
 var crypto2 = __toESM(require("crypto"));
 var import_child_process2 = require("child_process");
 var http2 = __toESM(require("http"));
@@ -705,7 +814,7 @@ var AutomationService = class _AutomationService {
   _server = null;
   _port = 0;
   _logger;
-  _authToken = crypto2.randomBytes(32).toString("hex");
+  _authToken;
   // Automation States
   _isActive = true;
   _rules = ["Run", "Allow", "Accept", "Always Allow", "Keep Waiting", "Retry", "Continue", "Allow Once", "Accept all"];
@@ -715,6 +824,12 @@ var AutomationService = class _AutomationService {
   constructor(context, logger) {
     this._context = context;
     this._logger = logger;
+    let token = context.globalState.get("automation_token", "");
+    if (!token) {
+      token = crypto2.randomBytes(32).toString("hex");
+      context.globalState.update("automation_token", token);
+    }
+    this._authToken = token;
     this.syncState();
     this.boot();
   }
@@ -760,7 +875,7 @@ var AutomationService = class _AutomationService {
     const target = this.getTargetFile();
     if (!target) return;
     try {
-      let html = fs2.readFileSync(target, "utf8");
+      let html = fs3.readFileSync(target, "utf8");
       const startTag = `<!-- ${_AutomationService.SCRIPT_TAG_ID}-START -->`;
       const endTag = `<!-- ${_AutomationService.SCRIPT_TAG_ID}-END -->`;
       const startIdx = html.indexOf(startTag);
@@ -772,10 +887,10 @@ var AutomationService = class _AutomationService {
         this.recalculateHashes();
         this.log("Bridge script removed from workbench.html");
       }
-      const dir = path2.dirname(target);
-      const bridgeFile = path2.join(dir, "ag-automation-bridge.js");
-      if (fs2.existsSync(bridgeFile)) {
-        fs2.unlinkSync(bridgeFile);
+      const dir = path3.dirname(target);
+      const bridgeFile = path3.join(dir, "ag-automation-bridge.js");
+      if (fs3.existsSync(bridgeFile)) {
+        fs3.unlinkSync(bridgeFile);
       }
     } catch (err) {
       this.log(`Failed to remove bridge script: ${err.message}`);
@@ -919,29 +1034,29 @@ var AutomationService = class _AutomationService {
   getTargetFile() {
     const root = vscode3.env.appRoot;
     const paths = [
-      path2.join(root, "out/vs/code/electron-sandbox/workbench/workbench.html"),
-      path2.join(root, "out/vs/code/electron-browser/workbench/workbench.html"),
-      path2.join(root, "out/vs/workbench/workbench.html")
+      path3.join(root, "out/vs/code/electron-sandbox/workbench/workbench.html"),
+      path3.join(root, "out/vs/code/electron-browser/workbench/workbench.html"),
+      path3.join(root, "out/vs/workbench/workbench.html")
     ];
-    return paths.find((p) => fs2.existsSync(p)) || null;
+    return paths.find((p) => fs3.existsSync(p)) || null;
   }
   verifyInjection() {
     const target = this.getTargetFile();
-    return target ? fs2.readFileSync(target, "utf8").includes(_AutomationService.SCRIPT_TAG_ID) : false;
+    return target ? fs3.readFileSync(target, "utf8").includes(_AutomationService.SCRIPT_TAG_ID) : false;
   }
   deployBridgeScript() {
     const target = this.getTargetFile();
     if (!target) return;
     try {
-      const dir = path2.dirname(target);
-      const src = path2.join(this._context.extensionPath, "src", "automationCore.js");
-      let code = fs2.readFileSync(src, "utf8");
+      const dir = path3.dirname(target);
+      const src = path3.join(this._context.extensionPath, "src", "automationCore.js");
+      let code = fs3.readFileSync(src, "utf8");
       code = code.replace("__RULES__", JSON.stringify(this._rules));
       code = code.replace("__STATE__", String(this._isActive));
       code = code.replace("__AUTH_TOKEN__", JSON.stringify(this._authToken));
-      const finalScriptPath = path2.join(dir, "ag-automation-bridge.js");
+      const finalScriptPath = path3.join(dir, "ag-automation-bridge.js");
       this.writeSafe(finalScriptPath, code);
-      let html = fs2.readFileSync(target, "utf8");
+      let html = fs3.readFileSync(target, "utf8");
       const scriptTag = `<script src="ag-automation-bridge.js?ts=${Date.now()}"></script>`;
       if (html.includes(_AutomationService.SCRIPT_TAG_ID)) {
         const startTag = `<!-- ${_AutomationService.SCRIPT_TAG_ID}-START -->`;
@@ -970,17 +1085,17 @@ ${scriptTag}
   }
   writeSafe(p, c) {
     try {
-      fs2.writeFileSync(p, c, "utf8");
+      fs3.writeFileSync(p, c, "utf8");
     } catch (e) {
       if (process.platform === "win32") throw new Error("Administrator privileges required to install automation.");
-      const tmp = path2.join(os2.tmpdir(), `ag_tmp_${Date.now()}`);
-      fs2.writeFileSync(tmp, c);
+      const tmp = path3.join(os3.tmpdir(), `ag_tmp_${Date.now()}`);
+      fs3.writeFileSync(tmp, c);
       try {
-        const cmd = process.platform === "darwin" ? `osascript -e 'do shell script "cp ${tmp} ${p}" with administrator privileges'` : `pkexec cp ${tmp} ${p}`;
+        const cmd = process.platform === "darwin" ? `osascript -e 'do shell script "cp \\"${tmp}\\" \\"${p}\\"" with administrator privileges'` : `pkexec cp "${tmp}" "${p}"`;
         (0, import_child_process2.execSync)(cmd);
       } finally {
         try {
-          fs2.unlinkSync(tmp);
+          fs3.unlinkSync(tmp);
         } catch {
         }
       }
@@ -988,13 +1103,13 @@ ${scriptTag}
   }
   recalculateHashes() {
     try {
-      const pJson = path2.join(vscode3.env.appRoot, "product.json");
-      const data = JSON.parse(fs2.readFileSync(pJson, "utf8"));
+      const pJson = path3.join(vscode3.env.appRoot, "product.json");
+      const data = JSON.parse(fs3.readFileSync(pJson, "utf8"));
       if (!data.checksums) return;
       Object.keys(data.checksums).forEach((k) => {
-        const fullPath = path2.join(vscode3.env.appRoot, "out", k.split("/").join(path2.sep));
-        if (fs2.existsSync(fullPath)) {
-          const hash = crypto2.createHash("sha256").update(fs2.readFileSync(fullPath)).digest("base64").replace(/=+$/, "");
+        const fullPath = path3.join(vscode3.env.appRoot, "out", k.split("/").join(path3.sep));
+        if (fs3.existsSync(fullPath)) {
+          const hash = crypto2.createHash("sha256").update(fs3.readFileSync(fullPath)).digest("base64").replace(/=+$/, "");
           data.checksums[k] = hash;
         }
       });
@@ -1008,7 +1123,7 @@ ${scriptTag}
 // src/updater.ts
 var vscode4 = __toESM(require("vscode"));
 var https2 = __toESM(require("https"));
-var REPO_OWNER = "trinhvanhao";
+var REPO_OWNER = "trinhhaox";
 var REPO_NAME = "Auto-Quota-Antigravity";
 var API_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
 async function checkForUpdates(context) {
@@ -1079,6 +1194,7 @@ function formatTime(t) {
 }
 function getQuotaColor(pct, direction = "down") {
   if (direction === "up") {
+    if (pct < 50) return { hex: "#10b981", dot: "\u{1F7E2}" };
     if (pct < 80) return { hex: "#FFAB40", dot: "\u{1F7E0}" };
     return { hex: "#ef4444", dot: "\u{1F534}" };
   } else {
@@ -1086,6 +1202,39 @@ function getQuotaColor(pct, direction = "down") {
     if (pct > 20) return { hex: "#f59e0b", dot: "\u{1F7E1}" };
     return { hex: "#ef4444", dot: "\u{1F534}" };
   }
+}
+
+// src/quota-history.ts
+var STORE_KEY = "quota_history";
+var MAX_ENTRIES = 288;
+var MIN_GAP_MS = 4 * 60 * 1e3;
+var ctx = null;
+var entries = [];
+function initQuotaHistory(context) {
+  ctx = context;
+  entries = context.globalState.get(STORE_KEY, []);
+}
+function recordQuotaSnapshot(data) {
+  if (!ctx) return;
+  const now = Date.now();
+  if (entries.length && now - entries[entries.length - 1].t < MIN_GAP_MS) return;
+  const v = {};
+  const collect = (service, quotas) => {
+    for (const q of quotas || []) {
+      if (q.displayValue !== void 0 && !q.displayValue.endsWith("%")) continue;
+      v[`${service}-${q.label}`] = Math.round(q.remaining * 10) / 10;
+    }
+  };
+  collect("Antigravity", data.antigravity?.quotas);
+  collect("Claude", data.claude?.quotas);
+  collect("Codex", data.codex?.quotas);
+  if (Object.keys(v).length === 0) return;
+  entries.push({ t: now, v });
+  if (entries.length > MAX_ENTRIES) entries = entries.slice(-MAX_ENTRIES);
+  ctx.globalState.update(STORE_KEY, entries);
+}
+function getQuotaHistory() {
+  return entries;
 }
 
 // src/extension.ts
@@ -1096,6 +1245,7 @@ var latestAutoHash = "";
 var globalSidebarProvider = null;
 var automationService = null;
 var refreshTimer = null;
+var lastRefreshAt = 0;
 var notifiedModels = /* @__PURE__ */ new Set();
 function autoDetectGroups(quotas) {
   const groupMap = /* @__PURE__ */ new Map();
@@ -1123,17 +1273,60 @@ function activate(context) {
   const quotaService = new QuotaService(logger);
   globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService);
   automationService = new AutomationService(context, logger);
+  initQuotaHistory(context);
   context.subscriptions.push(
     vscode5.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
   );
   statusBarItem = vscode5.window.createStatusBarItem(vscode5.StatusBarAlignment.Right, 100);
-  statusBarItem.command = "sqm.sidebar.focus";
+  statusBarItem.command = "sqm.menu";
   statusBarItem.text = "$(dashboard) Auto Quota Antigravity";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
   context.subscriptions.push(
     vscode5.commands.registerCommand("sqm.refresh", async () => {
       if (globalSidebarProvider) await globalSidebarProvider.updateData();
+    })
+  );
+  context.subscriptions.push(
+    vscode5.commands.registerCommand("sqm.removeInjection", async () => {
+      if (!automationService) return;
+      automationService.removeBridgeScript();
+      await automationService.patchSettings({ enabled: false });
+      await context.globalState.update("automation_consent", false);
+      vscode5.window.showInformationMessage(
+        "Automation bridge removed. Restart the IDE to fully unload it."
+      );
+    })
+  );
+  context.subscriptions.push(
+    vscode5.commands.registerCommand("sqm.menu", async () => {
+      const autoActive = automationService?.dumpDiagnostics().active ?? false;
+      const items = [
+        { id: "refresh", label: "$(refresh) Refresh quotas now" },
+        { id: "dashboard", label: "$(dashboard) Open dashboard" },
+        { id: "toggle", label: `$(zap) ${autoActive ? "Disable" : "Enable"} automation` },
+        { id: "remove", label: "$(trash) Remove automation injection" },
+        { id: "settings", label: "$(gear) Extension settings" }
+      ];
+      const pick = await vscode5.window.showQuickPick(items, { placeHolder: "Auto Quota Antigravity" });
+      switch (pick?.id) {
+        case "refresh":
+          triggerRefresh();
+          break;
+        case "dashboard":
+          vscode5.commands.executeCommand("sqm.sidebar.focus");
+          break;
+        case "toggle":
+          await automationService?.patchSettings({ enabled: !autoActive });
+          if (latestQuotaData) setLatestData(latestQuotaData);
+          break;
+        case "remove":
+          vscode5.commands.executeCommand("sqm.removeInjection");
+          break;
+        case "settings":
+          vscode5.commands.executeCommand("workbench.action.openSettings", "sqm");
+          break;
+      }
     })
   );
   context.subscriptions.push(
@@ -1144,18 +1337,28 @@ function activate(context) {
       }
     })
   );
-  setTimeout(() => {
-    if (globalSidebarProvider) globalSidebarProvider.updateData();
-  }, 2e3);
+  setTimeout(() => triggerRefresh(), 2e3);
   startAutoRefresh();
   context.subscriptions.push(vscode5.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration("sqm.refreshInterval")) {
       startAutoRefresh();
     }
+    if (e.affectsConfiguration("sqm.statusBar.mode")) {
+      refreshStatusBar();
+    }
+  }));
+  context.subscriptions.push(vscode5.window.onDidChangeWindowState((ws) => {
+    const intervalMs = (vscode5.workspace.getConfiguration("sqm").get("refreshInterval") || 5) * 60 * 1e3;
+    if (ws.focused && Date.now() - lastRefreshAt > intervalMs) {
+      triggerRefresh();
+    }
   }));
   setTimeout(() => {
     checkForUpdates(context);
   }, 1e4);
+}
+function escapeXml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 function buildTooltipSVG(data) {
   const rowHeight = 30;
@@ -1166,7 +1369,7 @@ function buildTooltipSVG(data) {
   let currentY = padding + 5;
   const renderGroupSection = (title, quotas) => {
     if (!quotas || quotas.length === 0) return;
-    contentHtml += `<text x="${padding}" y="${currentY + 12}" font-family="sans-serif" font-size="10" font-weight="800" fill="#4B5563" text-transform="uppercase">${title}</text>`;
+    contentHtml += `<text x="${padding}" y="${currentY + 12}" font-family="sans-serif" font-size="10" font-weight="800" fill="#4B5563" text-transform="uppercase">${escapeXml(title)}</text>`;
     currentY += groupHeaderHeight;
     quotas.forEach((q) => {
       const pct = Math.round(q.remaining);
@@ -1175,7 +1378,7 @@ function buildTooltipSVG(data) {
       contentHtml += `<rect x="${padding - 5}" y="${currentY}" width="${width - padding * 2 + 10}" height="${rowHeight - 4}" rx="6" fill="#FFFFFF" fill-opacity="0.03"/>`;
       contentHtml += `<circle cx="${padding + 8}" cy="${currentY + 13}" r="3.5" fill="${color.hex}"/>`;
       const cleanName = q.label.replace(" (Thinking)", "").replace(" (Medium)", "");
-      contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="600" fill="#9CA3AF">${cleanName}</text>`;
+      contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="600" fill="#9CA3AF">${escapeXml(cleanName)}</text>`;
       const barX = 180;
       const barWidth = 60;
       if (q.style === "fluid") {
@@ -1193,10 +1396,10 @@ function buildTooltipSVG(data) {
       }
       const pctX = 250;
       const centerText = q.displayValue !== void 0 ? q.displayValue : `${pct}%`;
-      contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="11" font-weight="bold" fill="#FFFFFF">${centerText}</text>`;
+      contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="11" font-weight="bold" fill="#FFFFFF">${escapeXml(centerText)}</text>`;
       const fullTime = `${time} ${q.absResetTime || ""}`.trim();
       const timeX = 285;
-      contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="10" font-weight="bold" fill="#FFFFFF">${fullTime}</text>`;
+      contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="10" font-weight="bold" fill="#FFFFFF">${escapeXml(fullTime)}</text>`;
       currentY += rowHeight;
     });
     contentHtml += `<line x1="${padding}" y1="${currentY - 5}" x2="${width - padding}" y2="${currentY - 5}" stroke="#2D333D" stroke-width="1" stroke-opacity="0.5"/>`;
@@ -1224,29 +1427,40 @@ function buildTooltipSVG(data) {
 }
 function refreshStatusBar() {
   if (!latestQuotaData) return;
-  let groupsText = "";
+  const segments = [];
   if (latestQuotaData.antigravity?.quotas) {
     const groups = autoDetectGroups(latestQuotaData.antigravity.quotas);
-    groupsText += groups.map((g) => {
+    for (const g of groups) {
       const members = latestQuotaData.antigravity.quotas.filter((q) => g.models.includes(q.label));
-      if (members.length === 0) return "";
+      if (members.length === 0) continue;
       const avg = members.reduce((acc, curr) => acc + curr.remaining, 0) / members.length;
       const shortName = g.title.replace("GEMINI ", "G").replace(" PRO", "P").replace(" FLASH", "F").split("/")[0];
       const dot = avg > 50 ? "\u{1F7E2}" : avg > 20 ? "\u{1F7E1}" : "\u{1F534}";
-      return `${dot} ${shortName} ${Math.round(avg)}%`;
-    }).filter((t) => t !== "").join("  |  ");
+      segments.push({ text: `${dot} ${shortName} ${Math.round(avg)}%`, dot, health: avg });
+    }
   }
-  if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length > 0) {
-    const cQuota = latestQuotaData.claude.quotas[0];
-    const color = getQuotaColor(cQuota.remaining, cQuota.direction || "up");
-    groupsText += `  Claude ${color.dot}`;
+  const pushService = (name2, status, fallbackDir) => {
+    if (!status?.isAuthenticated || !status.quotas?.length) return;
+    const q = status.quotas[0];
+    const dir = q.direction || fallbackDir;
+    const color = getQuotaColor(q.remaining, dir);
+    segments.push({
+      text: `${name2} ${color.dot}`,
+      dot: color.dot,
+      health: dir === "up" ? 100 - q.remaining : q.remaining
+    });
+  };
+  pushService("Claude", latestQuotaData.claude, "up");
+  pushService("Codex", latestQuotaData.codex, "down");
+  const mode = vscode5.workspace.getConfiguration("sqm").get("statusBar.mode") || "full";
+  let text = "Auto Quota Antigravity";
+  if (segments.length > 0) {
+    const worst = segments.reduce((a, b) => b.health < a.health ? b : a);
+    if (mode === "dot") text = worst.dot;
+    else if (mode === "compact") text = worst.text;
+    else text = segments.map((s) => s.text).join("  |  ");
   }
-  if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length > 0) {
-    const cxQuota = latestQuotaData.codex.quotas[0];
-    const color = getQuotaColor(cxQuota.remaining, cxQuota.direction || "down");
-    groupsText += `  Codex ${color.dot}`;
-  }
-  statusBarItem.text = `$(dashboard)  ${groupsText || "Auto Quota Antigravity"}`;
+  statusBarItem.text = `$(dashboard)  ${text}`;
   const svg = buildTooltipSVG(latestQuotaData);
   const base64 = Buffer.from(svg).toString("base64");
   const tooltip = new vscode5.MarkdownString();
@@ -1268,9 +1482,14 @@ function setLatestData(data) {
   latestQuotaData = data;
   latestDataHash = dataStr;
   latestAutoHash = autoStr;
+  recordQuotaSnapshot(data);
   refreshStatusBar();
   if (globalSidebarProvider && data) {
-    globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus ?? void 0 });
+    globalSidebarProvider.syncToWebview({
+      ...data,
+      autoClick: autoStatus ?? void 0,
+      history: getQuotaHistory()
+    });
   }
   checkNotifications(data);
 }
@@ -1279,19 +1498,25 @@ function startAutoRefresh() {
   const config = vscode5.workspace.getConfiguration("sqm");
   const intervalMins = config.get("refreshInterval") || 5;
   refreshTimer = setInterval(() => {
-    if (globalSidebarProvider) globalSidebarProvider.updateData();
+    if (!vscode5.window.state.focused) return;
+    triggerRefresh();
   }, intervalMins * 60 * 1e3);
+}
+function triggerRefresh() {
+  lastRefreshAt = Date.now();
+  if (globalSidebarProvider) globalSidebarProvider.updateData();
 }
 function checkNotifications(data) {
   const config = vscode5.workspace.getConfiguration("sqm");
   if (!config.get("enableNotifications")) return;
+  const threshold = Math.max(1, Math.min(90, config.get("notifyThreshold") || 20));
   const checkQuota = (serviceName, quotas) => {
     if (!quotas) return;
     quotas.forEach((q) => {
       const modelKey = `${serviceName}-${q.label}`;
       const isUp = q.direction === "up";
       const pct = Math.round(q.remaining);
-      const isUnhealthy = isUp ? pct >= 80 : pct <= 20;
+      const isUnhealthy = isUp ? pct >= 100 - threshold : pct <= threshold;
       if (!isUnhealthy) {
         notifiedModels.delete(modelKey);
         return;

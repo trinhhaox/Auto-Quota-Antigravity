@@ -18,7 +18,7 @@ export class AutomationService {
     private _server: http.Server | null = null;
     private _port: number = 0;
     private _logger?: vscode.OutputChannel;
-    private _authToken: string = crypto.randomBytes(32).toString('hex');
+    private _authToken: string;
 
     // Automation States
     private _isActive: boolean = true;
@@ -30,6 +30,15 @@ export class AutomationService {
     constructor(context: vscode.ExtensionContext, logger?: vscode.OutputChannel) {
         this._context = context;
         this._logger = logger;
+        // Token must be stable across sessions: the bridge script baked into
+        // workbench.html loads BEFORE this extension activates, so a per-session
+        // token would always mismatch and every heartbeat would 401.
+        let token = context.globalState.get<string>('automation_token', '');
+        if (!token) {
+            token = crypto.randomBytes(32).toString('hex');
+            context.globalState.update('automation_token', token);
+        }
+        this._authToken = token;
         this.syncState();
         this.boot();
     }
@@ -320,8 +329,8 @@ export class AutomationService {
             fs.writeFileSync(tmp, c);
             try {
                 const cmd = process.platform === 'darwin'
-                    ? `osascript -e 'do shell script "cp ${tmp} ${p}" with administrator privileges'`
-                    : `pkexec cp ${tmp} ${p}`;
+                    ? `osascript -e 'do shell script "cp \\"${tmp}\\" \\"${p}\\"" with administrator privileges'`
+                    : `pkexec cp "${tmp}" "${p}"`;
                 execSync(cmd);
             } finally {
                 try { fs.unlinkSync(tmp); } catch { /* cleanup best-effort */ }

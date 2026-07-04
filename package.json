@@ -2,7 +2,7 @@
     "name": "auto-quota-antigravity",
     "displayName": "Auto Quota Antigravity",
     "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "publisher": "BiViPi",
     "author": {
         "name": "BiViPi",
@@ -10,7 +10,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/BiViPi/AG-Manager.git"
+        "url": "https://github.com/trinhhaox/Auto-Quota-Antigravity.git"
     },
     "icon": "logo/logo.png",
     "engines": {
@@ -47,6 +47,14 @@
                 "command": "sqm.refresh",
                 "title": "Auto Quota Antigravity: Refresh Quotas",
                 "icon": "$(refresh)"
+            },
+            {
+                "command": "sqm.menu",
+                "title": "Auto Quota Antigravity: Quick Menu"
+            },
+            {
+                "command": "sqm.removeInjection",
+                "title": "Auto Quota Antigravity: Remove Automation Injection"
             }
         ],
         "configuration": {
@@ -69,6 +77,23 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Enable notifications for low quotas"
+                },
+                "sqm.notifyThreshold": {
+                    "type": "number",
+                    "default": 20,
+                    "minimum": 1,
+                    "maximum": 90,
+                    "description": "Notify when remaining quota drops to this percentage (or usage rises above 100 minus this percentage)."
+                },
+                "sqm.statusBar.mode": {
+                    "type": "string",
+                    "enum": [
+                        "full",
+                        "compact",
+                        "dot"
+                    ],
+                    "default": "full",
+                    "description": "Status bar display: full = all groups, compact = worst group only, dot = single colored dot."
                 },
 "sqm.claude.usagePeriod": {
                     "type": "string",

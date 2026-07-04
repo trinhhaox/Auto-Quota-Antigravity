@@ -1,5 +1,28 @@
 # Changelog - AG Manager
 
+## [1.5.0] - 2026-07-05
+
+### Bug Fixes
+- **Automation Bridge 401 (critical):** Auth token is now persisted in globalState instead of regenerated per session. The injected bridge script loads before the extension activates, so a per-session token guaranteed every heartbeat failed with 401 — automation toggles and metrics never worked within a session.
+- **Automation Self-Disable:** Bridge script now validates HTTP status and response shape before applying remote config. Previously a 401 body was parsed as config, setting `active = undefined` and silently killing the engine.
+- **Sidebar Stuck on "Refreshing...":** Network failures in `fetchStatus` are now caught properly; cached server info resets so the next refresh re-discovers the local server port.
+- **Admin-Privilege Writes:** File paths are now quoted in osascript/pkexec copy commands (paths with spaces broke installation).
+- **Windows Nested PowerShell:** Removed redundant `powershell.exe -Command` prefixes for commands already executed inside a PowerShell shell.
+- **Status Dot Colors:** Usage-direction quotas (Claude/Codex) now show green below 50% usage instead of permanent orange.
+- **Tooltip SVG Escaping:** Labels containing `&`/`<` no longer break the status bar tooltip.
+- **Auto-Updater Repo:** Update checks now point to `trinhhaox/Auto-Quota-Antigravity`.
+
+### New Features
+- **Real Codex Quotas:** Session (5h) and Weekly usage percentages parsed from the newest Codex CLI session log (`~/.codex/sessions/**/*.jsonl`) — no network call needed.
+- **Quota History Sparklines:** Each gauge now shows a mini trend chart (~4h window); snapshots persist across restarts (24h retention).
+- **Status Bar Quick Menu:** Clicking the status bar opens a Quick Pick — refresh, open dashboard, toggle automation, remove injection, open settings.
+- **Remove Automation Injection command:** Cleanly removes the bridge script from workbench.html and revokes consent.
+- **Configurable Notify Threshold** (`sqm.notifyThreshold`, default 20%).
+- **Status Bar Display Modes** (`sqm.statusBar.mode`): full / compact (worst group only) / dot.
+
+### Performance
+- **Focus-Aware Polling:** Auto-refresh skips while the window is unfocused (no more ps/lsof spawns and API calls overnight); a focus listener catches up immediately when data is stale.
+
 ## [1.4.0] - 2026-03-28
 
 ### Claude Code Quota — OAuth Migration

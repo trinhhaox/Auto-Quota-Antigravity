@@ -10,6 +10,7 @@ export function formatTime(t: string): string {
 
 export function getQuotaColor(pct: number, direction: 'up' | 'down' = 'down'): { hex: string, dot: string } {
     if (direction === 'up') {
+        if (pct < 50) return { hex: '#10b981', dot: '\u{1F7E2}' };
         if (pct < 80) return { hex: '#FFAB40', dot: '\u{1F7E0}' };
         return { hex: '#ef4444', dot: '\u{1F534}' };
     } else {

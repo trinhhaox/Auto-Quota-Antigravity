@@ -29,7 +29,11 @@
                 const res = await fetch(`http://127.0.0.1:${p}/system/heartbeat${query}`, {
                     headers: { 'Authorization': `Bearer ${config.authToken}` }
                 });
+                // A foreign server (or stale token) may answer with 401/404 —
+                // never apply that response as config or automation dies silently.
+                if (!res.ok) continue;
                 const remote = await res.json();
+                if (typeof remote.power !== 'boolean' || !Array.isArray(remote.rules)) continue;
 
                 config.port = p; // Remember working port
                 config.active = remote.power;

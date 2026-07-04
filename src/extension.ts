@@ -3,8 +3,9 @@ import { QuotaService } from './quotaService';
 import { SidebarProvider } from './sidebarProvider';
 import { AutomationService } from './automationService';
 import { checkForUpdates } from './updater';
-import { DashboardData, AutoClickDiagnostics, ModelGroup, QuotaInfo } from './types';
+import { DashboardData, ModelGroup, QuotaInfo, UserStatus } from './types';
 import { formatTime, getQuotaColor } from './utils';
+import { initQuotaHistory, recordQuotaSnapshot, getQuotaHistory } from './quota-history';
 
 let statusBarItem: vscode.StatusBarItem;
 let latestQuotaData: DashboardData | null = null;
@@ -13,6 +14,7 @@ let latestAutoHash: string = '';
 let globalSidebarProvider: SidebarProvider | null = null;
 let automationService: AutomationService | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
+let lastRefreshAt = 0;
 const notifiedModels = new Set<string>();
 
 function autoDetectGroups(quotas: QuotaInfo[]): ModelGroup[] {
@@ -47,13 +49,14 @@ export function activate(context: vscode.ExtensionContext) {
     const quotaService = new QuotaService(logger);
     globalSidebarProvider = new SidebarProvider(context.extensionUri, quotaService);
     automationService = new AutomationService(context, logger);
+    initQuotaHistory(context);
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider("sqm.sidebar", globalSidebarProvider)
     );
 
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBarItem.command = "sqm.sidebar.focus";
+    statusBarItem.command = "sqm.menu";
     statusBarItem.text = "$(dashboard) Auto Quota Antigravity";
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
@@ -61,6 +64,45 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand("sqm.refresh", async () => {
             if (globalSidebarProvider) await globalSidebarProvider.updateData();
+        })
+    );
+
+    // Cleanly remove the injected bridge script from workbench.html
+    context.subscriptions.push(
+        vscode.commands.registerCommand("sqm.removeInjection", async () => {
+            if (!automationService) return;
+            automationService.removeBridgeScript();
+            await automationService.patchSettings({ enabled: false });
+            await context.globalState.update('automation_consent', false);
+            vscode.window.showInformationMessage(
+                'Automation bridge removed. Restart the IDE to fully unload it.'
+            );
+        })
+    );
+
+    // Quick Pick menu opened from the status bar item
+    context.subscriptions.push(
+        vscode.commands.registerCommand("sqm.menu", async () => {
+            const autoActive = automationService?.dumpDiagnostics().active ?? false;
+            type MenuItem = vscode.QuickPickItem & { id: string };
+            const items: MenuItem[] = [
+                { id: 'refresh', label: '$(refresh) Refresh quotas now' },
+                { id: 'dashboard', label: '$(dashboard) Open dashboard' },
+                { id: 'toggle', label: `$(zap) ${autoActive ? 'Disable' : 'Enable'} automation` },
+                { id: 'remove', label: '$(trash) Remove automation injection' },
+                { id: 'settings', label: '$(gear) Extension settings' }
+            ];
+            const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Auto Quota Antigravity' });
+            switch (pick?.id) {
+                case 'refresh': triggerRefresh(); break;
+                case 'dashboard': vscode.commands.executeCommand('sqm.sidebar.focus'); break;
+                case 'toggle':
+                    await automationService?.patchSettings({ enabled: !autoActive });
+                    if (latestQuotaData) setLatestData(latestQuotaData);
+                    break;
+                case 'remove': vscode.commands.executeCommand('sqm.removeInjection'); break;
+                case 'settings': vscode.commands.executeCommand('workbench.action.openSettings', 'sqm'); break;
+            }
         })
     );
 
@@ -74,7 +116,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // Initial fetch
-    setTimeout(() => { if (globalSidebarProvider) globalSidebarProvider.updateData(); }, 2000);
+    setTimeout(() => triggerRefresh(), 2000);
 
     // [V10] Auto-refresh
     startAutoRefresh();
@@ -84,12 +126,29 @@ export function activate(context: vscode.ExtensionContext) {
         if (e.affectsConfiguration("sqm.refreshInterval")) {
             startAutoRefresh();
         }
+        if (e.affectsConfiguration("sqm.statusBar.mode")) {
+            refreshStatusBar();
+        }
+    }));
+
+    // Catch up immediately when the window regains focus with stale data
+    context.subscriptions.push(vscode.window.onDidChangeWindowState(ws => {
+        const intervalMs = (vscode.workspace.getConfiguration("sqm").get<number>("refreshInterval") || 5) * 60 * 1000;
+        if (ws.focused && Date.now() - lastRefreshAt > intervalMs) {
+            triggerRefresh();
+        }
     }));
 
     // [AUTO-UPDATER] Check for new version from GitHub after 10s
     setTimeout(() => {
         checkForUpdates(context);
     }, 10000);
+}
+
+// Escape text nodes for the tooltip SVG — a label containing & or < would
+// otherwise invalidate the whole XML document and blank the tooltip.
+function escapeXml(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function buildTooltipSVG(data: DashboardData): string {
@@ -105,7 +164,7 @@ function buildTooltipSVG(data: DashboardData): string {
         if (!quotas || quotas.length === 0) return;
 
         // Group Header
-        contentHtml += `<text x="${padding}" y="${currentY + 12}" font-family="sans-serif" font-size="10" font-weight="800" fill="#4B5563" text-transform="uppercase">${title}</text>`;
+        contentHtml += `<text x="${padding}" y="${currentY + 12}" font-family="sans-serif" font-size="10" font-weight="800" fill="#4B5563" text-transform="uppercase">${escapeXml(title)}</text>`;
         currentY += groupHeaderHeight;
 
         quotas.forEach((q) => {
@@ -121,7 +180,7 @@ function buildTooltipSVG(data: DashboardData): string {
 
             // Model Name
             const cleanName = q.label.replace(' (Thinking)', '').replace(' (Medium)', '');
-            contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="600" fill="#9CA3AF">${cleanName}</text>`;
+            contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="600" fill="#9CA3AF">${escapeXml(cleanName)}</text>`;
 
             // Progress Bar (Fluid HP style or Segmented)
             const barX = 180;
@@ -146,11 +205,11 @@ function buildTooltipSVG(data: DashboardData): string {
             // Fixed alignment for Pct & Time
             const pctX = 250;
             const centerText = q.displayValue !== undefined ? q.displayValue : `${pct}%`;
-            contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="11" font-weight="bold" fill="#FFFFFF">${centerText}</text>`;
+            contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="11" font-weight="bold" fill="#FFFFFF">${escapeXml(centerText)}</text>`;
 
             const fullTime = `${time} ${q.absResetTime || ''}`.trim();
             const timeX = 285;
-            contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="10" font-weight="bold" fill="#FFFFFF">${fullTime}</text>`;
+            contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="10" font-weight="bold" fill="#FFFFFF">${escapeXml(fullTime)}</text>`;
 
             currentY += rowHeight;
         });
@@ -189,37 +248,47 @@ function buildTooltipSVG(data: DashboardData): string {
 function refreshStatusBar() {
     if (!latestQuotaData) return;
 
-    // Status bar text - Sum up or aggregate from all services
-    let groupsText = "";
+    // Each segment carries a "health" (0 = worst, 100 = best) so compact/dot
+    // modes can surface the single most critical service.
+    const segments: { text: string; dot: string; health: number }[] = [];
 
     // 1. Antigravity Groups (auto-detected)
     if (latestQuotaData.antigravity?.quotas) {
         const groups = autoDetectGroups(latestQuotaData.antigravity.quotas);
-        groupsText += groups.map(g => {
-            const members = latestQuotaData!.antigravity!.quotas.filter((q) => g.models.includes(q.label));
-            if (members.length === 0) return '';
+        for (const g of groups) {
+            const members = latestQuotaData.antigravity.quotas.filter((q) => g.models.includes(q.label));
+            if (members.length === 0) continue;
             const avg = members.reduce((acc, curr) => acc + curr.remaining, 0) / members.length;
             const shortName = g.title.replace('GEMINI ', 'G').replace(' PRO', 'P').replace(' FLASH', 'F').split('/')[0];
             const dot = avg > 50 ? '🟢' : (avg > 20 ? '🟡' : '🔴');
-            return `${dot} ${shortName} ${Math.round(avg)}%`;
-        }).filter(t => t !== '').join('  |  ');
+            segments.push({ text: `${dot} ${shortName} ${Math.round(avg)}%`, dot, health: avg });
+        }
     }
 
-    // 2. Claude (if authenticated)
-    if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length > 0) {
-        const cQuota = latestQuotaData.claude.quotas[0];
-        const color = getQuotaColor(cQuota.remaining, cQuota.direction || 'up');
-        groupsText += `  Claude ${color.dot}`;
-    }
+    // 2. Claude / Codex (if authenticated)
+    const pushService = (name: string, status: UserStatus | null | undefined, fallbackDir: 'up' | 'down') => {
+        if (!status?.isAuthenticated || !status.quotas?.length) return;
+        const q = status.quotas[0];
+        const dir = q.direction || fallbackDir;
+        const color = getQuotaColor(q.remaining, dir);
+        segments.push({
+            text: `${name} ${color.dot}`,
+            dot: color.dot,
+            health: dir === 'up' ? 100 - q.remaining : q.remaining
+        });
+    };
+    pushService('Claude', latestQuotaData.claude, 'up');
+    pushService('Codex', latestQuotaData.codex, 'down');
 
-    // 3. Codex (if authenticated)
-    if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length > 0) {
-        const cxQuota = latestQuotaData.codex.quotas[0];
-        const color = getQuotaColor(cxQuota.remaining, cxQuota.direction || 'down');
-        groupsText += `  Codex ${color.dot}`;
+    const mode = vscode.workspace.getConfiguration('sqm').get<string>('statusBar.mode') || 'full';
+    let text = 'Auto Quota Antigravity';
+    if (segments.length > 0) {
+        const worst = segments.reduce((a, b) => (b.health < a.health ? b : a));
+        if (mode === 'dot') text = worst.dot;
+        else if (mode === 'compact') text = worst.text;
+        else text = segments.map(s => s.text).join('  |  ');
     }
-
-    statusBarItem.text = `$(dashboard)  ${groupsText || 'Auto Quota Antigravity'}`;
+    statusBarItem.text = `$(dashboard)  ${text}`;
 
     // Beautiful Tooltip
     const svg = buildTooltipSVG(latestQuotaData);
@@ -246,9 +315,14 @@ export function setLatestData(data: DashboardData) {
     latestDataHash = dataStr;
     latestAutoHash = autoStr;
 
+    recordQuotaSnapshot(data);
     refreshStatusBar();
     if (globalSidebarProvider && data) {
-        globalSidebarProvider.syncToWebview({ ...data, autoClick: autoStatus ?? undefined });
+        globalSidebarProvider.syncToWebview({
+            ...data,
+            autoClick: autoStatus ?? undefined,
+            history: getQuotaHistory()
+        });
     }
     // [V10] Check for low quotas
     checkNotifications(data);
@@ -261,13 +335,23 @@ function startAutoRefresh() {
     const intervalMins = config.get<number>("refreshInterval") || 5;
 
     refreshTimer = setInterval(() => {
-        if (globalSidebarProvider) globalSidebarProvider.updateData();
+        // Skip while the window is unfocused — polling spawns ps/lsof and hits
+        // remote APIs for data nobody is looking at. A focus listener catches up.
+        if (!vscode.window.state.focused) return;
+        triggerRefresh();
     }, intervalMins * 60 * 1000);
+}
+
+function triggerRefresh() {
+    lastRefreshAt = Date.now();
+    if (globalSidebarProvider) globalSidebarProvider.updateData();
 }
 
 function checkNotifications(data: DashboardData) {
     const config = vscode.workspace.getConfiguration("sqm");
     if (!config.get<boolean>("enableNotifications")) return;
+    // User-tunable: warn when remaining drops to N% (or usage rises to 100-N%)
+    const threshold = Math.max(1, Math.min(90, config.get<number>("notifyThreshold") || 20));
 
     const checkQuota = (serviceName: string, quotas: QuotaInfo[]) => {
         if (!quotas) return;
@@ -276,7 +360,7 @@ function checkNotifications(data: DashboardData) {
             const isUp = q.direction === 'up';
             const pct = Math.round(q.remaining);
 
-            const isUnhealthy = isUp ? pct >= 80 : pct <= 20;
+            const isUnhealthy = isUp ? pct >= 100 - threshold : pct <= threshold;
 
             if (!isUnhealthy) {
                 // Quota recovered — allow re-notification if it drops again

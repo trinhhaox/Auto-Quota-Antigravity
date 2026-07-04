@@ -2,7 +2,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { QuotaService } from './quotaService';
 import { setLatestData } from "./extension";
-import { DashboardData, WebviewMessage, AutoClickDiagnostics } from './types';
+import { DashboardData, WebviewMessage, AutoClickDiagnostics, HistoryEntry } from './types';
+
+type WebviewPayload = DashboardData & { autoClick?: AutoClickDiagnostics; history?: HistoryEntry[] };
 
 function getNonce(): string {
     return crypto.randomBytes(16).toString('hex');
@@ -11,7 +13,7 @@ function getNonce(): string {
 export class SidebarProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
 
-    private static _latestData: (DashboardData & { autoClick?: AutoClickDiagnostics }) | null = null;
+    private static _latestData: WebviewPayload | null = null;
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
@@ -45,7 +47,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    public syncToWebview(data: DashboardData & { autoClick?: AutoClickDiagnostics }) {
+    public syncToWebview(data: WebviewPayload) {
         SidebarProvider._latestData = data;
         if (this._view) {
             this._view.webview.postMessage({ type: "update", data });
@@ -70,6 +72,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 'claude.usagePeriod': sqm.get<string>('claude.usagePeriod') || 'both',
                 'refreshInterval': sqm.get<number>('refreshInterval') || 5,
                 'enableNotifications': sqm.get<boolean>('enableNotifications') !== false,
+                'notifyThreshold': sqm.get<number>('notifyThreshold') ?? 20,
+                'statusBar.mode': sqm.get<string>('statusBar.mode') || 'full',
                 'automation.enabled': ag.get<boolean>('automation.enabled') !== false,
             }
         });
