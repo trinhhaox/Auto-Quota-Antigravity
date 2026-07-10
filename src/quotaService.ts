@@ -42,9 +42,11 @@ export class QuotaService {
 
     private cachedClaude: UserStatus | null = null;
     private claudeLastFetch: number = 0;
+    private claudeNextRetry: number = 0; // earliest retry time after a transient failure
     private cachedCodex: UserStatus | null = null;
     private codexLastFetch: number = 0;
     private readonly CACHE_TTL = 120000; // 120 seconds (OAuth endpoint rate-limits aggressively)
+    private readonly RETRY_TTL = 45000;  // back off 45s between attempts once rate-limited
 
     private logger?: vscode.OutputChannel;
 
@@ -129,7 +131,7 @@ export class QuotaService {
                     'Authorization': `Bearer ${accessToken}`,
                     'anthropic-beta': 'oauth-2025-04-20',
                     'Content-Type': 'application/json',
-                    'User-Agent': 'auto-quota-antigravity/1.8.0'
+                    'User-Agent': 'auto-quota-antigravity/1.9.0'
                 },
                 timeout: 10000
             };
@@ -394,12 +396,32 @@ export class QuotaService {
     // ─── [ADDED] Claude Code Status ───────────────────────────────────────────
     async fetchClaudeStatus(): Promise<UserStatus | null> {
         const now = Date.now();
-        if (this.cachedClaude && (now - this.claudeLastFetch < this.CACHE_TTL)) {
+        const cachedGood = !!this.cachedClaude && this.cachedClaude.quotas.length > 0;
+
+        // Serve good cached data within its TTL.
+        if (cachedGood && now - this.claudeLastFetch < this.CACHE_TTL) {
             return this.cachedClaude;
         }
-        this.cachedClaude = await this._fetchClaudeStatusImpl();
+        // After a transient failure (429 / network), wait RETRY_TTL between
+        // attempts instead of hammering the aggressively rate-limited usage
+        // endpoint every refresh — hammering perpetuates the rate limit.
+        if (now < this.claudeNextRetry) {
+            return this.cachedClaude; // last good data, or transient status if none yet
+        }
+
+        const fresh = await this._fetchClaudeStatusImpl();
         this.claudeLastFetch = now;
-        return this.cachedClaude;
+
+        if (fresh && fresh.quotas.length > 0) {
+            // Capture the good sample and clear any backoff.
+            this.cachedClaude = fresh;
+            this.claudeNextRetry = 0;
+            return fresh;
+        }
+        // Transient failure: NEVER overwrite good data with an empty/error
+        // status (that would blank the Claude panel until the next reload).
+        this.claudeNextRetry = now + this.RETRY_TTL;
+        return cachedGood ? this.cachedClaude : fresh;
     }
 
     private async _fetchClaudeStatusImpl(): Promise<UserStatus | null> {
@@ -469,9 +491,17 @@ export class QuotaService {
             try {
                 usageData = await this.fetchClaudeUsageOAuth(oauthToken.accessToken);
             } catch (e: any) {
-                if (e?.message === 'RATE_LIMITED' && this.cachedClaude) {
-                    this.log("Rate limited — returning cached Claude data");
-                    return this.cachedClaude;
+                if (e?.message === 'RATE_LIMITED') {
+                    if (this.cachedClaude && this.cachedClaude.quotas.length > 0) {
+                        this.log("Rate limited — returning cached Claude data");
+                        return this.cachedClaude;
+                    }
+                    this.log("Rate limited with no cached data — will retry");
+                    return {
+                        name: displayName, email, tier,
+                        quotas: [], isAuthenticated: true,
+                        error: 'Rate limited — retrying shortly…'
+                    };
                 }
                 return {
                     name: displayName, email, tier,
