@@ -1,166 +1,120 @@
 {
-    "name": "auto-quota-antigravity",
-    "displayName": "Auto Quota Antigravity",
-    "description": "Monitor AI model quotas and manage automation features inside Antigravity IDE.",
-    "version": "1.8.0",
-    "publisher": "BiViPi",
-    "author": {
-        "name": "BiViPi",
-        "url": "https://github.com/BiViPi"
-    },
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/trinhhaox/Auto-Quota-Antigravity.git"
-    },
-    "icon": "logo/logo.png",
-    "engines": {
-        "vscode": "^1.96.0"
-    },
-    "categories": [
-        "Other"
-    ],
-    "activationEvents": [
-        "onStartupFinished"
-    ],
-    "main": "./dist/extension.js",
-    "contributes": {
-        "viewsContainers": {
-            "activitybar": [
-                {
-                    "id": "sqm-explorer",
-                    "title": "Auto Quota Antigravity",
-                    "icon": "$(dashboard)"
-                }
-            ]
-        },
-        "views": {
-            "sqm-explorer": [
-                {
-                    "type": "webview",
-                    "id": "sqm.sidebar",
-                    "name": "Dashboard"
-                }
-            ]
-        },
-        "commands": [
-            {
-                "command": "sqm.refresh",
-                "title": "Auto Quota Antigravity: Refresh Quotas",
-                "icon": "$(refresh)"
-            },
-            {
-                "command": "sqm.menu",
-                "title": "Auto Quota Antigravity: Quick Menu"
-            },
-            {
-                "command": "sqm.removeInjection",
-                "title": "Auto Quota Antigravity: Remove Automation Injection"
-            }
-        ],
-        "configuration": {
-            "title": "Auto Quota Antigravity",
-            "properties": {
-                "sqm.refreshInterval": {
-                    "type": "number",
-                    "default": 5,
-                    "enum": [
-                        1,
-                        2,
-                        5,
-                        10,
-                        15,
-                        30
-                    ],
-                    "description": "Auto-refresh interval in minutes (default is 5)"
-                },
-                "sqm.enableNotifications": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Enable notifications for low quotas"
-                },
-                "sqm.notifyThreshold": {
-                    "type": "number",
-                    "default": 20,
-                    "minimum": 1,
-                    "maximum": 90,
-                    "description": "Notify when remaining quota drops to this percentage."
-                },
-                "sqm.statusBar.mode": {
-                    "type": "string",
-                    "enum": [
-                        "full",
-                        "compact",
-                        "dot"
-                    ],
-                    "default": "full",
-                    "description": "Status bar display: full = all groups, compact = worst group only, dot = single colored dot."
-                },
-"sqm.claude.usagePeriod": {
-                    "type": "string",
-                    "enum": [
-                        "5-hour",
-                        "7-day",
-                        "both"
-                    ],
-                    "default": "both",
-                    "description": "Which Claude.ai usage windows to display in the dashboard."
-                },
-                "ag-manager.automation.enabled": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Enable/disable the automation system."
-                },
-                "sqm.autoPauseOnLowQuota": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Automatically pause the automation system when any Antigravity quota drops below the notify threshold."
-                },
-                "ag-manager.automation.customRules": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "default": [],
-                    "description": "User-defined button labels for auto-click (exact match after normalization)."
-                },
-                "ag-manager.automation.scanScope": {
-                    "type": "string",
-                    "enum": [
-                        "all",
-                        "panel"
-                    ],
-                    "default": "all",
-                    "description": "Where auto-click may act: all = entire workbench, panel = only side/bottom panels, notifications and dialogs."
-                },
-                "ag-manager.automation.rules": {
-                    "type": "array",
-                    "default": [
-                        "Run",
-                        "Allow",
-                        "Accept",
-                        "Always Allow",
-                        "Keep Waiting",
-                        "Retry",
-                        "Continue",
-                        "Allow Once",
-                        "Accept all"
-                    ],
-                    "description": "Active automation rules for auto-click."
-                }
-            }
+  "name": "auto-quota-antigravity",
+  "displayName": "Auto Quota Antigravity",
+  "description": "Monitor Antigravity, Claude Code and Codex AI model quotas inside Antigravity IDE.",
+  "version": "1.9.0",
+  "publisher": "BiViPi",
+  "author": {
+    "name": "BiViPi",
+    "url": "https://github.com/BiViPi"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trinhhaox/Auto-Quota-Antigravity.git"
+  },
+  "icon": "logo/logo.png",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sqm-explorer",
+          "title": "Auto Quota Antigravity",
+          "icon": "$(dashboard)"
         }
+      ]
     },
-    "scripts": {
-        "vscode:prepublish": "npm run build",
-        "build": "node ./esbuild.js",
-        "watch": "node ./esbuild.js --watch",
-        "package": "vsce package"
+    "views": {
+      "sqm-explorer": [
+        {
+          "type": "webview",
+          "id": "sqm.sidebar",
+          "name": "Dashboard"
+        }
+      ]
     },
-    "devDependencies": {
-        "@types/vscode": "^1.96.0",
-        "@types/node": "20.x",
-        "typescript": "^5.7.2",
-        "esbuild": "^0.24.0",
-        "@vscode/vsce": "^3.2.1"
+    "commands": [
+      {
+        "command": "sqm.refresh",
+        "title": "Auto Quota Antigravity: Refresh Quotas",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sqm.menu",
+        "title": "Auto Quota Antigravity: Quick Menu"
+      }
+    ],
+    "configuration": {
+      "title": "Auto Quota Antigravity",
+      "properties": {
+        "sqm.refreshInterval": {
+          "type": "number",
+          "default": 5,
+          "enum": [
+            1,
+            2,
+            5,
+            10,
+            15,
+            30
+          ],
+          "description": "Auto-refresh interval in minutes (default is 5)"
+        },
+        "sqm.enableNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable notifications for low quotas"
+        },
+        "sqm.notifyThreshold": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 90,
+          "description": "Notify when remaining quota drops to this percentage."
+        },
+        "sqm.statusBar.mode": {
+          "type": "string",
+          "enum": [
+            "full",
+            "compact",
+            "dot"
+          ],
+          "default": "full",
+          "description": "Status bar display: full = all groups, compact = worst group only, dot = single colored dot."
+        },
+        "sqm.claude.usagePeriod": {
+          "type": "string",
+          "enum": [
+            "5-hour",
+            "7-day",
+            "both"
+          ],
+          "default": "both",
+          "description": "Which Claude.ai usage windows to display in the dashboard."
+        }
+      }
     }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node ./esbuild.js",
+    "watch": "node ./esbuild.js --watch",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.96.0",
+    "@types/node": "20.x",
+    "typescript": "^5.7.2",
+    "esbuild": "^0.24.0",
+    "@vscode/vsce": "^3.2.1"
+  }
 }

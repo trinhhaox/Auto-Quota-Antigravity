@@ -1,5 +1,4 @@
 const vscode = acquireVsCodeApi();
-const state = vscode.getState() || {};
 
 function escapeHtml(str) {
     if (typeof str !== 'string') return '';
@@ -24,7 +23,7 @@ window.addEventListener("message", (event) => {
 vscode.postMessage({ type: "onRefresh" });
 
 document.getElementById('refresh-btn').addEventListener('click', () => {
-    document.getElementById('quota-list').innerHTML = '<div class="loading">Refreshing...</div>';
+    document.getElementById('quota-list').innerHTML = '<div class="loading">Refreshing…</div>';
     vscode.postMessage({ type: 'onRefresh' });
 });
 
@@ -37,8 +36,14 @@ document.getElementById('settings-btn').addEventListener('click', () => {
     }
 });
 
-// [MODIFIED] renderDashboard: data is now DashboardData {antigravity, claude, codex}
-// Old: data was UserStatus directly. New: data.antigravity = UserStatus | null
+// Per-service accent color — makes each group instantly distinguishable
+const SERVICE_ACCENT = {
+    Antigravity: '#40c4ff',
+    Claude: '#d97757',
+    Codex: '#10a37f'
+};
+
+// data: DashboardData { antigravity, claude, codex } (+ history)
 function renderDashboard(data) {
     if (!data) {
         document.getElementById('user-info').innerHTML = '';
@@ -46,7 +51,6 @@ function renderDashboard(data) {
         return;
     }
 
-    // --- Antigravity user card (unchanged logic, uses data.antigravity) ---
     const ag = data.antigravity;
     if (ag) {
         document.getElementById('user-info').innerHTML = `
@@ -62,8 +66,6 @@ function renderDashboard(data) {
         document.getElementById('user-info').innerHTML = '';
     }
 
-    // --- Render all service groups ---
-    // [ADDED] renderServiceGroup helper: renders a titled gauge group identical to Antigravity style
     let html = '';
     if (ag) {
         html += renderServiceGroup('ANTIGRAVITY', ag, 'Antigravity', data.history);
@@ -79,20 +81,14 @@ function renderDashboard(data) {
         html = '<p class="error-msg">No services detected.<br>Ensure Antigravity IDE is running, or sign in to Claude Code / Codex.</p>';
     }
     document.getElementById('quota-list').innerHTML = html;
-
-    if (data.autoClick) {
-        renderAutoClick(data.autoClick);
-    } else if (data.antigravity && data.antigravity.autoClick) {
-        renderAutoClick(data.antigravity.autoClick);
-    }
 }
 
-// [ADDED] Renders a single service group (title + user info row + gauges)
-// Uses exact same HTML/CSS structure as original Antigravity rendering
-// Unified color rule (matches src/utils.ts): remaining >50 green, >20 yellow, else red
+// Five-stop health scale — full → empty maps green → lime → yellow → orange → red
 function healthColor(pct) {
-    if (pct > 50) return '#10b981';
-    if (pct > 20) return '#f59e0b';
+    if (pct >= 70) return '#22c55e';
+    if (pct >= 45) return '#84cc16';
+    if (pct >= 25) return '#eab308';
+    if (pct >= 10) return '#f97316';
     return '#ef4444';
 }
 
@@ -104,6 +100,7 @@ function isPercentQuota(q) {
 function renderServiceGroup(title, status, serviceKey, history) {
     if (!status) { return ''; }
 
+    const accent = SERVICE_ACCENT[serviceKey] || 'var(--ui-border)';
     const isAuthenticated = status.isAuthenticated !== false; // true if undefined (backward compat)
     const infoLine = `${escapeHtml(status.tier)} &bull; ${escapeHtml(status.email)}`;
 
@@ -117,195 +114,22 @@ function renderServiceGroup(title, status, serviceKey, history) {
 
     let gaugesHtml = '';
     if (status.error) {
-        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">${escapeHtml(status.error)}</p>`;
+        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:8px 0;">${escapeHtml(status.error)}</p>`;
     } else if (isAuthenticated && status.quotas && status.quotas.length > 0) {
         gaugesHtml = `<div class="gauge-grid">${status.quotas.map(q =>
             createGauge(q, historySeries(history, `${serviceKey}-${q.label}`))
         ).join('')}</div>`;
     } else if (!isAuthenticated) {
-        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:10px 0;">${escapeHtml(status.email)}</p>`;
+        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:8px 0;">${escapeHtml(status.email)}</p>`;
     }
 
     return `
-        <div class="service-group">
+        <div class="service-group" style="--accent:${accent}">
             <div class="group-header">${dotHtml}<span>${escapeHtml(title)}</span></div>
             <div class="service-info">${infoLine}</div>
             ${gaugesHtml}
         </div>
     `;
-}
-
-
-function renderAutoClick(config) {
-    let container = document.getElementById('automation-module');
-    if (!container) {
-        container = document.createElement('div');
-        container.id = 'automation-module';
-        container.className = 'automation-container';
-        document.getElementById('app').appendChild(container);
-    }
-
-    // Full rule set — must cover every default rule the host ships,
-    // otherwise some rules can never be toggled off from the UI.
-    const builtinRules = [
-        { id: 'Run', label: 'Run' },
-        { id: 'Allow', label: 'Allow' },
-        { id: 'Accept', label: 'Accept' },
-        { id: 'Always Allow', label: 'Always Allow' },
-        { id: 'Allow Once', label: 'Allow Once' },
-        { id: 'Retry', label: 'Retry' },
-        { id: 'Continue', label: 'Continue' },
-        { id: 'Keep Waiting', label: 'Keep Waiting' },
-        { id: 'Accept all', label: 'Accept All' }
-    ];
-    const customRules = Array.isArray(config.customRules) ? config.customRules : [];
-    const rules = builtinRules.concat(
-        customRules.map(r => ({ id: r, label: r, custom: true }))
-    );
-
-    const metrics = config.metrics || {};
-    const totalActions = config.total_actions || 0;
-    const logs = Array.isArray(config.logs) ? config.logs.slice(0, 5) : [];
-
-    const activityHtml = logs.length > 0
-        ? `<div class="activity-feed">
-                <div class="activity-title">Recent activity</div>
-                ${logs.map(l => `
-                    <div class="activity-row">
-                        <span class="activity-ts">${escapeHtml(l.ts || '')}</span>
-                        <span class="activity-ref">${escapeHtml(l.ref || l.act || '')}</span>
-                    </div>`).join('')}
-           </div>`
-        : '';
-
-    // 7-day action bar chart (oldest → today)
-    const daily = config.daily || {};
-    const dayBars = [];
-    for (let i = 6; i >= 0; i--) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        // Local date key — must mirror automation-stats.ts, not UTC
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        dayBars.push({ key, count: daily[key] || 0, dow: 'SMTWTFS'[d.getDay()] });
-    }
-    const maxCount = Math.max(1, ...dayBars.map(b => b.count));
-    const weekTotal = dayBars.reduce((a, b) => a + b.count, 0);
-    const dailyHtml = weekTotal > 0
-        ? `<div class="daily-chart">
-                <div class="activity-title">Actions — last 7 days (${weekTotal})</div>
-                <div class="daily-bars">
-                    ${dayBars.map(b => `
-                        <div class="daily-col" title="${b.key}: ${b.count}">
-                            <div class="daily-bar" style="height:${Math.max(2, Math.round((b.count / maxCount) * 28))}px"></div>
-                            <div class="daily-dow">${b.dow}</div>
-                        </div>`).join('')}
-                </div>
-           </div>`
-        : '';
-
-    container.innerHTML = `
-        <div class="section-title">Automation Suite
-            <span class="total-actions" title="Total automated actions">${totalActions} actions</span>
-        </div>
-
-        <div class="power-row">
-            <span class="power-label">Automation System</span>
-            <label class="switch">
-                <input type="checkbox" id="master-power" ${config.active ? 'checked' : ''}>
-                <span class="slider"></span>
-            </label>
-        </div>
-
-        <div class="automation-grid ${!config.active ? 'system-off' : ''}">
-            ${rules.map(rule => {
-        const rulesList = Array.isArray(config.rules) ? config.rules : [];
-        const isRuleOn = rulesList.includes(rule.id);
-        const isActuallyActive = config.active && isRuleOn;
-        const count = metrics[rule.id] || 0;
-        return `
-                    <div class="automation-card ${isActuallyActive ? 'active' : ''} ${!config.active ? 'disabled' : ''}" data-rule="${escapeHtml(rule.id)}">
-                        <div class="glow-ring"></div>
-                        ${rule.custom ? `<span class="rule-remove" data-remove="${escapeHtml(rule.id)}" title="Remove custom rule">&times;</span>` : ''}
-                        ${count > 0 ? `<span class="rule-badge">${count > 999 ? '999+' : count}</span>` : ''}
-                        <div class="automation-label">${escapeHtml(rule.label)}</div>
-                        <div class="automation-status">${isActuallyActive ? 'Active' : (config.active ? 'Idle' : 'Paused')}</div>
-                    </div>
-                `;
-    }).join('')}
-        </div>
-
-        <div class="custom-rule-row">
-            <input id="custom-rule-input" class="settings-input" maxlength="40"
-                placeholder="Add button label (e.g. Confirm)..." spellcheck="false">
-            <button id="custom-rule-add" class="settings-eye">Add</button>
-        </div>
-        ${dailyHtml}
-        ${activityHtml}
-    `;
-
-    // Event delegation — single listener, no re-registration leak
-    container.onclick = function(e) {
-        const rulesList = Array.isArray(config.rules) ? config.rules : [];
-
-        // Remove custom rule (× badge) — must not toggle the card underneath
-        const removeBtn = e.target.closest('.rule-remove');
-        if (removeBtn) {
-            const ruleId = removeBtn.getAttribute('data-remove');
-            vscode.postMessage({
-                type: 'onAutoClickChange',
-                config: {
-                    rules: rulesList.filter(r => r !== ruleId),
-                    customRules: customRules.filter(r => r !== ruleId)
-                }
-            });
-            return;
-        }
-
-        // Add custom rule from the input field
-        if (e.target.id === 'custom-rule-add') {
-            const input = document.getElementById('custom-rule-input');
-            const value = (input.value || '').trim();
-            if (!value) return;
-            const exists = rules.some(r => r.id.toLowerCase() === value.toLowerCase());
-            if (exists) { input.value = ''; return; }
-            vscode.postMessage({
-                type: 'onAutoClickChange',
-                config: {
-                    rules: [...rulesList, value],          // enable immediately
-                    customRules: [...customRules, value]
-                }
-            });
-            return;
-        }
-
-        const card = e.target.closest('.automation-card');
-        if (card) {
-            const ruleId = card.getAttribute('data-rule');
-            let currentRules = [...rulesList];
-
-            card.style.opacity = '0.5';
-            card.style.pointerEvents = 'none';
-
-            if (currentRules.includes(ruleId)) {
-                currentRules = currentRules.filter(r => r !== ruleId);
-            } else {
-                currentRules.push(ruleId);
-            }
-
-            vscode.postMessage({
-                type: 'onAutoClickChange',
-                config: { rules: currentRules }
-            });
-        }
-    };
-    container.onchange = function(e) {
-        if (e.target.id === 'master-power') {
-            vscode.postMessage({
-                type: 'onAutoClickChange',
-                config: { enabled: e.target.checked }
-            });
-        }
-    };
 }
 
 function formatTime(t) {
@@ -334,7 +158,7 @@ function historySeries(history, key) {
 // Tiny inline trend chart rendered under the quota bar
 function sparklineSvg(series, color) {
     if (!series || series.length < 3) return '';
-    const w = 96, h = 14;
+    const w = 96, h = 12;
     const min = Math.min(...series);
     const max = Math.max(...series);
     const span = (max - min) || 1;
@@ -342,7 +166,7 @@ function sparklineSvg(series, color) {
         `${((i / (series.length - 1)) * w).toFixed(1)},${(h - 2 - ((v - min) / span) * (h - 4)).toFixed(1)}`
     ).join(' ');
     return `<svg class="quota-spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-        <polyline points="${pts}" fill="none" stroke="${escapeHtml(color)}" stroke-width="1.5" stroke-opacity="0.8"/>
+        <polyline points="${pts}" fill="none" stroke="${escapeHtml(color)}" stroke-width="1.5" stroke-opacity="0.75"/>
     </svg>`;
 }
 
@@ -373,17 +197,16 @@ function createGauge(quota, series) {
                     <span class="quota-time">${escapeHtml(time)}</span>
                 </div>
                 <div class="quota-bar">
-                    <div class="quota-bar-fill" style="width: ${barWidth}%; background-color: ${color};"></div>
+                    <div class="quota-bar-fill" style="width:${barWidth}%;background:linear-gradient(90deg,${color}99,${color});box-shadow:0 0 6px ${color}66;"></div>
                 </div>
                 ${sparklineSvg(series, color)}
             </div>
-            <div class="quota-value" style="color: ${color};">${escapeHtml(centerText)}</div>
+            <div class="quota-value" style="color:${color};">${escapeHtml(centerText)}</div>
         </div>
     `;
 }
 
 function shortLabel(label) {
-    // Rút gọn tên model cho compact display
     return label
         .replace('Gemini 3.1', 'G3.1')
         .replace('Gemini 3', 'G3')
@@ -420,11 +243,6 @@ function renderSettingsData(settings) {
             { value: 'compact', label: 'Compact' },
             { value: 'dot', label: 'Dot only' }
         ]},
-        { key: 'autoPauseOnLowQuota', label: 'Auto-pause on low quota', type: 'toggle' },
-        { key: 'automation.scanScope', label: 'Auto-click scope', type: 'select', options: [
-            { value: 'all', label: 'Whole window' },
-            { value: 'panel', label: 'Panels only' }
-        ]},
     ];
 
     const panel = document.getElementById('settings-panel');
@@ -435,15 +253,7 @@ function renderSettingsData(settings) {
         html += '<div class="settings-row">';
         html += `<label class="settings-label">${f.label}</label>`;
 
-        if (f.type === 'password' || f.type === 'text') {
-            const masked = f.type === 'password' && val ? '••••••••' : '';
-            html += `<div class="settings-input-wrap">
-                <input class="settings-input" type="${f.type === 'password' ? 'password' : 'text'}"
-                    data-key="${f.key}" value="${val}" placeholder="${f.placeholder || ''}"
-                    autocomplete="off" spellcheck="false">
-                ${f.type === 'password' ? '<button class="settings-eye" data-key="' + f.key + '">Show</button>' : ''}
-            </div>`;
-        } else if (f.type === 'select') {
+        if (f.type === 'select') {
             html += `<select class="settings-select" data-key="${f.key}">`;
             f.options.forEach(opt => {
                 const sel = String(val) === String(opt.value) ? 'selected' : '';
@@ -460,22 +270,6 @@ function renderSettingsData(settings) {
     html += '<button class="settings-save" id="save-settings-btn">Save</button>';
     panel.innerHTML = html;
 
-    // Eye toggle for password fields
-    panel.querySelectorAll('.settings-eye').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const key = btn.getAttribute('data-key');
-            const input = panel.querySelector(`input[data-key="${key}"]`);
-            if (input.type === 'password') {
-                input.type = 'text';
-                btn.textContent = 'Hide';
-            } else {
-                input.type = 'password';
-                btn.textContent = 'Show';
-            }
-        });
-    });
-
-    // Save button
     document.getElementById('save-settings-btn').addEventListener('click', () => {
         const result = {};
         panel.querySelectorAll('[data-key]').forEach(el => {
@@ -485,7 +279,6 @@ function renderSettingsData(settings) {
                 result[key] = el.checked;
             } else {
                 let v = el.value.trim();
-                // Convert numeric selects
                 if (key === 'refreshInterval' || key === 'notifyThreshold') v = parseInt(v);
                 result[key] = v;
             }
@@ -493,4 +286,3 @@ function renderSettingsData(settings) {
         vscode.postMessage({ type: 'saveSettings', settings: result });
     });
 }
-

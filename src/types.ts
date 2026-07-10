@@ -24,34 +24,10 @@ export interface DashboardData {
     antigravity: UserStatus | null;
     claude: UserStatus | null;
     codex: UserStatus | null;
-    autoClick?: AutoClickDiagnostics;
-}
-
-export interface AutoClickDiagnostics {
-    active: boolean;
-    rules: string[];
-    customRules: string[];
-    total_actions: number;
-    metrics: Record<string, number>;
-    logs: AutoClickLogEntry[];
-    daily: Record<string, number>; // "YYYY-MM-DD" -> action count (7-day window)
-}
-
-export interface AutoClickLogEntry {
-    ts: string;
-    act: string;
-    ref: string;
-}
-
-export interface AutoClickConfig {
-    enabled?: boolean;
-    rules?: string[];
-    customRules?: string[];
 }
 
 export type WebviewMessage =
     | { type: 'onRefresh' }
-    | { type: 'onAutoClickChange'; config: AutoClickConfig }
     | { type: 'getSettings' }
     | { type: 'saveSettings'; settings: Record<string, unknown> };
 

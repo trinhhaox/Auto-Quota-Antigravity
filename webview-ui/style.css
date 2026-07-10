@@ -20,7 +20,7 @@ body {
 }
 
 #app {
-    padding: 12px 10px 16px;
+    padding: 10px 8px 12px;
 }
 
 /* Header */
@@ -28,29 +28,45 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 
 .header h1 {
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.02em;
-    color: var(--vscode-foreground);
     opacity: 0.9;
 }
 
-button#refresh-btn {
+.header-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+button#refresh-btn,
+button#settings-btn {
     background: transparent;
     color: var(--vscode-foreground);
     border: 1px solid var(--ui-border);
     border-radius: 6px;
-    padding: 2px 8px;
-    font-size: 11px;
     cursor: pointer;
     transition: border-color 0.15s ease, opacity 0.15s ease;
 }
 
-button#refresh-btn:hover {
+button#refresh-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+}
+
+button#settings-btn {
+    padding: 2px 6px;
+    font-size: 13px;
+    line-height: 1;
+}
+
+button#refresh-btn:hover,
+button#settings-btn:hover {
     opacity: 0.85;
     border-color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
 }
@@ -59,18 +75,17 @@ button#refresh-btn:hover {
 .user-card {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
+    gap: 9px;
+    padding: 7px 9px;
     background: var(--ui-surface);
     border-radius: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
     border: 1px solid var(--ui-border);
 }
 
 .avatar {
-    width: 26px;
-    height: 26px;
-    background: transparent;
+    width: 24px;
+    height: 24px;
     border: 1px solid var(--ui-border);
     border-radius: 50%;
     display: flex;
@@ -78,7 +93,6 @@ button#refresh-btn:hover {
     justify-content: center;
     font-weight: 600;
     font-size: 12px;
-    color: var(--vscode-foreground);
     flex-shrink: 0;
 }
 
@@ -96,33 +110,70 @@ button#refresh-btn:hover {
     max-width: 200px;
 }
 
-/* List layout */
+/* Service Group — card with a colored left accent per service */
+.service-group {
+    margin-bottom: 10px;
+    padding: 9px 10px 9px 11px;
+    border: 1px solid var(--ui-border);
+    border-left: 2px solid var(--accent, var(--ui-border));
+    border-radius: 9px;
+    background: var(--ui-surface);
+}
+
+.group-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    margin-bottom: 1px;
+    text-transform: uppercase;
+    color: var(--accent, var(--vscode-foreground));
+    opacity: 0.95;
+}
+
+.group-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.service-info {
+    font-size: 10px;
+    color: var(--ui-subtle);
+    margin-bottom: 7px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Quota list */
 .gauge-grid {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
 }
 
 .quota-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-    padding: 8px 10px;
-    border: 1px solid var(--ui-border);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+    gap: 9px;
+    padding: 7px 9px;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
 }
 
 .quota-main {
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 4px;
     min-width: 0;
     flex: 1;
 }
 
-/* Label + reset countdown on one line */
 .quota-top {
     display: flex;
     align-items: baseline;
@@ -134,7 +185,6 @@ button#refresh-btn:hover {
 .quota-label {
     font-size: 11px;
     font-weight: 600;
-    color: var(--vscode-foreground);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -150,15 +200,14 @@ button#refresh-btn:hover {
 .quota-value {
     font-size: 13px;
     font-weight: 700;
-    color: var(--vscode-foreground);
-    min-width: 42px;
+    min-width: 40px;
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
 
 .quota-bar {
     position: relative;
-    height: 5px;
+    height: 6px;
     background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
     border-radius: 999px;
     overflow: hidden;
@@ -173,9 +222,15 @@ button#refresh-btn:hover {
     transition: width 0.4s ease;
 }
 
+.quota-spark {
+    display: block;
+    margin-top: 2px;
+    opacity: 0.7;
+}
+
 /* Informational rows (e.g. Codex active model) */
 .model-row {
-    padding: 6px 10px;
+    padding: 5px 9px;
 }
 
 .model-value {
@@ -187,60 +242,28 @@ button#refresh-btn:hover {
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 60%;
+    text-align: right;
 }
 
 /* States */
 .loading,
 .error-msg {
     text-align: center;
-    padding: 18px 8px;
+    padding: 16px 8px;
     color: var(--ui-muted);
     font-size: 11px;
     line-height: 1.6;
 }
 
-/* Service Group — card with status dot in header */
-.service-group {
-    margin-bottom: 12px;
-    padding: 10px;
-    border: 1px solid var(--ui-border);
-    border-radius: 10px;
-    background: var(--ui-surface);
-}
-
-.group-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--vscode-foreground);
-    letter-spacing: 0.08em;
-    margin-bottom: 2px;
-    text-transform: uppercase;
-    opacity: 0.9;
-}
-
-.group-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-
-.service-info {
-    font-size: 10px;
-    color: var(--ui-subtle);
-    margin-bottom: 8px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-/* Automation Suite */
-.automation-container {
-    margin-top: 14px;
+/* Settings Panel */
+.settings-container {
     padding: 8px 0;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--ui-border);
+}
+
+.settings-container.hidden {
+    display: none;
 }
 
 .section-title {
@@ -249,117 +272,7 @@ button#refresh-btn:hover {
     color: var(--ui-muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    margin-bottom: 10px;
-}
-
-.automation-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
-}
-
-.automation-card {
-    background: transparent;
-    border: 1px solid var(--ui-border);
-    border-radius: 8px;
-    padding: 10px 8px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-    position: relative;
-}
-
-.automation-card:hover {
-    border-color: color-mix(in srgb, var(--vscode-foreground) 35%, transparent);
-}
-
-.automation-card.active {
-    border-color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
-}
-
-.automation-card.disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-.automation-grid.system-off .automation-card {
-    pointer-events: none;
-}
-
-.glow-ring {
-    display: none;
-}
-
-.automation-label {
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--vscode-foreground);
-    opacity: 0.85;
-    text-align: center;
-}
-
-.automation-status {
-    font-size: 8px;
-    font-weight: 700;
-    text-transform: uppercase;
-    color: var(--ui-subtle);
-}
-
-.automation-card.active .automation-status {
-    color: var(--vscode-foreground);
-}
-
-/* Main Power Toggle */
-.power-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 10px;
-    border: 1px solid var(--ui-border);
-    border-radius: 8px;
-    margin-bottom: 10px;
-}
-
-.power-label {
-    font-weight: 600;
-    color: var(--ui-muted);
-}
-
-/* Header Actions */
-.header-actions {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-}
-
-button#settings-btn {
-    background: transparent;
-    color: var(--vscode-foreground);
-    border: 1px solid var(--ui-border);
-    border-radius: 6px;
-    padding: 2px 6px;
-    font-size: 13px;
-    cursor: pointer;
-    transition: border-color 0.15s ease, opacity 0.15s ease;
-    line-height: 1;
-}
-
-button#settings-btn:hover {
-    opacity: 0.85;
-    border-color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
-}
-
-/* Settings Panel */
-.settings-container {
-    padding: 10px 0;
-    margin-bottom: 12px;
-    border-bottom: 1px solid var(--ui-border);
-}
-
-.settings-container.hidden {
-    display: none;
+    margin-bottom: 8px;
 }
 
 .settings-row {
@@ -367,7 +280,7 @@ button#settings-btn:hover {
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    padding: 6px 0;
+    padding: 5px 0;
 }
 
 .settings-label {
@@ -376,46 +289,6 @@ button#settings-btn:hover {
     color: var(--ui-muted);
     white-space: nowrap;
     min-width: 90px;
-}
-
-.settings-input-wrap {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex: 1;
-    min-width: 0;
-}
-
-.settings-input {
-    flex: 1;
-    min-width: 0;
-    background: var(--vscode-input-background, var(--ui-surface));
-    color: var(--vscode-input-foreground, var(--vscode-foreground));
-    border: 1px solid var(--vscode-input-border, var(--ui-border));
-    border-radius: 4px;
-    padding: 4px 6px;
-    font-size: 11px;
-    font-family: var(--vscode-editor-font-family, monospace);
-    outline: none;
-}
-
-.settings-input:focus {
-    border-color: var(--vscode-focusBorder, color-mix(in srgb, var(--vscode-foreground) 50%, transparent));
-}
-
-.settings-eye {
-    background: transparent;
-    border: 1px solid var(--ui-border);
-    border-radius: 4px;
-    color: var(--ui-muted);
-    font-size: 9px;
-    padding: 3px 5px;
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-.settings-eye:hover {
-    color: var(--vscode-foreground);
 }
 
 .settings-select {
@@ -431,7 +304,7 @@ button#settings-btn:hover {
 
 .settings-save {
     width: 100%;
-    margin-top: 10px;
+    margin-top: 8px;
     background: var(--vscode-button-background, color-mix(in srgb, var(--vscode-foreground) 15%, transparent));
     color: var(--vscode-button-foreground, var(--vscode-foreground));
     border: none;
@@ -447,7 +320,7 @@ button#settings-btn:hover {
     opacity: 0.85;
 }
 
-/* Switch (reuse VS Code if available, fallback) */
+/* Toggle switch */
 .switch {
     position: relative;
     display: inline-block;
@@ -488,137 +361,4 @@ button#settings-btn:hover {
 
 .switch input:checked + .slider:before {
     transform: translateX(18px);
-}
-
-/* Mini history trend chart under each quota bar */
-.quota-spark {
-    display: block;
-    margin-top: 3px;
-    opacity: 0.65;
-}
-
-/* Automation Suite additions: action counter, per-rule badges, activity feed */
-.total-actions {
-    float: right;
-    font-size: 9px;
-    font-weight: 600;
-    color: var(--ui-subtle);
-    text-transform: none;
-    letter-spacing: 0;
-}
-
-.rule-badge {
-    position: absolute;
-    top: 4px;
-    right: 6px;
-    font-size: 8px;
-    font-weight: 700;
-    color: var(--ui-muted);
-    background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
-    border-radius: 999px;
-    padding: 1px 5px;
-    font-variant-numeric: tabular-nums;
-}
-
-.automation-card.active .rule-badge {
-    color: var(--vscode-foreground);
-}
-
-.activity-feed {
-    margin-top: 10px;
-    padding: 8px 10px;
-    border: 1px solid var(--ui-border);
-    border-radius: 8px;
-}
-
-.activity-title {
-    font-size: 9px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--ui-subtle);
-    margin-bottom: 5px;
-}
-
-.activity-row {
-    display: flex;
-    gap: 8px;
-    font-size: 10px;
-    padding: 2px 0;
-    min-width: 0;
-}
-
-.activity-ts {
-    color: var(--ui-subtle);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-}
-
-.activity-ref {
-    color: var(--ui-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-/* Custom rule input + remove badge */
-.custom-rule-row {
-    display: flex;
-    gap: 6px;
-    margin-top: 8px;
-}
-
-.rule-remove {
-    position: absolute;
-    top: 2px;
-    left: 6px;
-    font-size: 12px;
-    line-height: 1;
-    color: var(--ui-subtle);
-    cursor: pointer;
-    padding: 2px;
-}
-
-.rule-remove:hover {
-    color: #ef4444;
-}
-
-/* 7-day action chart */
-.daily-chart {
-    margin-top: 10px;
-    padding: 8px 10px;
-    border: 1px solid var(--ui-border);
-    border-radius: 8px;
-}
-
-.daily-bars {
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    height: 42px;
-}
-
-.daily-col {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 3px;
-}
-
-.daily-bar {
-    width: 100%;
-    max-width: 22px;
-    border-radius: 3px 3px 0 0;
-    background: color-mix(in srgb, var(--vscode-foreground) 35%, transparent);
-}
-
-.daily-col:last-child .daily-bar {
-    background: #10b981;
-}
-
-.daily-dow {
-    font-size: 8px;
-    color: var(--ui-subtle);
 }

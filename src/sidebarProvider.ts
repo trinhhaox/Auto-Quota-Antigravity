@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { QuotaService } from './quotaService';
 import { setLatestData } from "./extension";
-import { DashboardData, WebviewMessage, AutoClickDiagnostics, HistoryEntry } from './types';
+import { DashboardData, WebviewMessage, HistoryEntry } from './types';
 
-type WebviewPayload = DashboardData & { autoClick?: AutoClickDiagnostics; history?: HistoryEntry[] };
+type WebviewPayload = DashboardData & { history?: HistoryEntry[] };
 
 function getNonce(): string {
     return crypto.randomBytes(16).toString('hex');
@@ -37,8 +37,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage(async (data: WebviewMessage) => {
             if (data.type === "onRefresh") {
                 this.updateData();
-            } else if (data.type === "onAutoClickChange") {
-                vscode.commands.executeCommand("ag-manager.updateAutoClick", data.config);
             } else if (data.type === "getSettings") {
                 await this._sendSettings();
             } else if (data.type === "saveSettings") {
@@ -64,7 +62,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     private async _sendSettings() {
         const sqm = vscode.workspace.getConfiguration('sqm');
-        const ag = vscode.workspace.getConfiguration('ag-manager');
 
         this._view?.webview.postMessage({
             type: 'settings',
@@ -74,24 +71,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 'enableNotifications': sqm.get<boolean>('enableNotifications') !== false,
                 'notifyThreshold': sqm.get<number>('notifyThreshold') ?? 20,
                 'statusBar.mode': sqm.get<string>('statusBar.mode') || 'full',
-                'autoPauseOnLowQuota': sqm.get<boolean>('autoPauseOnLowQuota') === true,
-                'automation.enabled': ag.get<boolean>('automation.enabled') !== false,
-                'automation.scanScope': ag.get<string>('automation.scanScope') || 'all',
             }
         });
     }
 
     private async _saveSettings(settings: Record<string, unknown>) {
         const sqm = vscode.workspace.getConfiguration('sqm');
-        const ag = vscode.workspace.getConfiguration('ag-manager');
         const target = vscode.ConfigurationTarget.Global;
 
         for (const [key, value] of Object.entries(settings)) {
-            if (key.startsWith('automation.')) {
-                await ag.update(key, value, target);
-            } else {
-                await sqm.update(key, value, target);
-            }
+            await sqm.update(key, value, target);
         }
 
         await this._sendSettings();

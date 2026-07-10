@@ -1,5 +1,24 @@
 # Changelog - AG Manager
 
+## [1.9.0] - 2026-07-11
+
+### Removed — Automation Suite
+- **Automation / auto-click feature fully removed.** The extension is now a focused quota dashboard for Antigravity, Claude Code and Codex. The auto-click bridge that patched the IDE's `workbench.html` is gone, along with its settings, commands and UI panel.
+- **One-time cleanup on upgrade:** any bridge script injected by an older version is automatically removed from `workbench.html` and the `product.json` checksums restored, so the IDE no longer loads a dead script or warns about a modified installation.
+
+### UI — compact & colorful
+- Dashboard trimmed to just the quota view; tighter spacing throughout.
+- Each service card now has a colored left accent (Antigravity blue, Claude orange, Codex green) for instant distinction.
+- Quota bars use a five-stop health scale (green → lime → yellow → orange → red) with a soft colored glow and gradient fill; the percentage value is colored to match.
+
+## [1.8.1] - 2026-07-11
+
+### Bug Fixes
+- **Claude Code quota not displaying (cache poisoning):** On startup the usage endpoint (`api.anthropic.com/api/oauth/usage`) is frequently rate-limited because Claude Code CLI and this extension poll the same token. Previously, if the very first fetch hit HTTP 429 (before any data was cached), the empty rate-limited status was stored as the cache and served for the rest of the session — the Claude panel stayed blank until an IDE reload. Fixes:
+  - **Never overwrite good cached quotas with an empty/error status** — once a quota sample is captured it survives transient failures.
+  - **Back off 45s between attempts after a 429** instead of re-hammering every 120s, which perpetuated the rate limit and prevented ever landing a successful response.
+  - Clearer status message ("Rate limited — retrying shortly…") while waiting for the first successful sample.
+
 ## [1.8.0] - 2026-07-05
 
 ### Automation Suite — 5 New Features
