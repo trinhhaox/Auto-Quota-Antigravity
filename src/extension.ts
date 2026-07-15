@@ -228,7 +228,8 @@ function refreshStatusBar() {
         const q = status.quotas.find(isPercentQuota);
         if (!q) return;
         const color = getQuotaColor(q.remaining);
-        segments.push({ text: `${name} ${color.dot}`, dot: color.dot, health: q.remaining });
+        const pct = Math.round(q.remaining);
+        segments.push({ text: `${color.dot} ${name} ${pct}%`, dot: color.dot, health: q.remaining });
     };
     pushService('Claude', latestQuotaData.claude);
     pushService('Codex', latestQuotaData.codex);
