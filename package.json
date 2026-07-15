@@ -2,7 +2,7 @@
   "name": "auto-quota-antigravity",
   "displayName": "Auto Quota Antigravity",
   "description": "Monitor Antigravity, Claude Code and Codex AI model quotas inside Antigravity IDE.",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "publisher": "BiViPi",
   "author": {
     "name": "BiViPi",

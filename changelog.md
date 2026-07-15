@@ -1,5 +1,10 @@
 # Changelog - AG Manager
 
+## [1.9.1] - 2026-07-16
+
+### Status Bar — Claude Code quota %
+- **Show percentage for Claude Code and Codex on status bar:** Previously only a colored dot was shown (`Claude 🔴`). Now displays the actual percentage alongside the dot (`🔴 Claude 23%`), consistent with the Gemini model format (`🟢 G3.5F 69%`).
+
 ## [1.9.0] - 2026-07-11
 
 ### Removed — Automation Suite
