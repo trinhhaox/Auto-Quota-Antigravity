@@ -1,9 +1,27 @@
 # Changelog - AG Manager
 
+## [1.9.3] - 2026-08-22
+
+### Deduplication & Smart Grouping
+- **Khử trùng lặp model hoàn toàn:** Loại bỏ việc lặp lại 3 lần các model biến thể Reasoning / Thinking (`Low`, `Medium`, `High`) của Gemini (như Gemini 3.5 Flash, Gemini 3.7 Flash, Gemini 3.6 Flash, Gemini 3.1 Pro) do dùng chung 1 quota pool.
+- **Tối ưu gom nhóm Tooltip SVG:** Gom toàn bộ model Antigravity thành 2 nhóm tinh gọn `ANTIGRAVITY · GEMINI MODELS` và `ANTIGRAVITY · CLAUDE / GPT`, không còn bị xé nhỏ thành hàng loạt header con.
+- **Đồng bộ dữ liệu sạch cho cả Sidebar Webview, Tooltip SVG và Status Bar.**
+
+## [1.9.2] - 2026-08-22
+
+
+### Status Bar & Tooltip Visual Enhancement
+- **Rõ ràng & trực quan hơn:** Thay thế các ký hiệu viết tắt khó hiểu (`G3.1P`, `G3.5F`) bằng tên model tiêu chuẩn, ngắn gọn và dễ nhận biết (`Gemini Pro`, `Gemini Flash`, `Claude`, `Claude CLI`, `Codex`).
+- **Hiển thị thông minh thời gian hồi phục (Smart Reset Time):** Tự động hiển thị thời gian reset rút gọn kèm theo khi quota < 100% (ví dụ: `🟡 Claude 45% (1h30m)` hoặc `🔴 Gemini Pro 15% (35m)`).
+- **Phân cách thanh thoát:** Sử dụng dấu chấm giữa ` · ` thanh lịch thay vì thanh đứng ` | ` cồng kềnh.
+- **Cảnh báo động (Dynamic Visual Alert):** Khi bất kỳ dịch vụ nào chạm mức nguy cấp (≤ 20%), Status Bar tự động chuyển sang icon cảnh báo `$(warning)` cùng màu nền nổi bật để nhắc nhở người dùng.
+- **Nâng cấp Tooltip Card SVG:** Giao diện SVG hover hiện đại chuẩn Dark Glassmorphism, hiển thị badge trạng thái hệ thống, phân chia rõ từng nguồn dịch vụ (Antigravity IDE, Claude Code CLI, OpenAI Codex) với thanh tiến trình gradient và các nút tác vụ nhanh (Refresh, Open Dashboard, Settings).
+
 ## [1.9.1] - 2026-07-16
 
 ### Status Bar — Claude Code quota %
 - **Show percentage for Claude Code and Codex on status bar:** Previously only a colored dot was shown (`Claude 🔴`). Now displays the actual percentage alongside the dot (`🔴 Claude 23%`), consistent with the Gemini model format (`🟢 G3.5F 69%`).
+
 
 ## [1.9.0] - 2026-07-11
 

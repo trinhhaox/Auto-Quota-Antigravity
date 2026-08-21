@@ -359,7 +359,7 @@ export class QuotaService {
     private parseResponse(resp: any): UserStatus {
         const user = resp.userStatus;
         const modelConfigs = user?.cascadeModelConfigData?.clientModelConfigs || [];
-        const quotas: QuotaInfo[] = modelConfigs
+        const rawQuotas: QuotaInfo[] = modelConfigs
             .filter((m: any) => m.quotaInfo)
             .map((m: any) => {
                 const resetTimeStr = m.quotaInfo.resetTime;
@@ -385,13 +385,30 @@ export class QuotaService {
                     themeColor: m.label.includes('Gemini') ? '#40C4FF' : (m.label.includes('Claude') ? '#FFAB40' : '#69F0AE')
                 };
             });
+
+        // Deduplicate variants (e.g. Low/Medium/High/Thinking) that share the same quota
+        const quotaMap = new Map<string, QuotaInfo>();
+        for (const q of rawQuotas) {
+            const cleanLabel = q.label
+                .replace(/\s*\(Thinking\)/i, '')
+                .replace(/\s*\(Medium\)/i, '')
+                .replace(/\s*\(High\)/i, '')
+                .replace(/\s*\(Low\)/i, '')
+                .trim();
+            const existing = quotaMap.get(cleanLabel);
+            if (!existing || q.remaining < existing.remaining) {
+                quotaMap.set(cleanLabel, { ...q, label: cleanLabel });
+            }
+        }
+
         return {
             name: user?.name || 'User',
             email: user?.email || '',
             tier: user?.userTier?.name || user?.planStatus?.planInfo?.planName || 'Free',
-            quotas
+            quotas: Array.from(quotaMap.values())
         };
     }
+
 
     // ─── [ADDED] Claude Code Status ───────────────────────────────────────────
     async fetchClaudeStatus(): Promise<UserStatus | null> {

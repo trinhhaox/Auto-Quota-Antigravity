@@ -480,7 +480,7 @@ var QuotaService = class {
   parseResponse(resp) {
     const user = resp.userStatus;
     const modelConfigs = user?.cascadeModelConfigData?.clientModelConfigs || [];
-    const quotas = modelConfigs.filter((m) => m.quotaInfo).map((m) => {
+    const rawQuotas = modelConfigs.filter((m) => m.quotaInfo).map((m) => {
       const resetTimeStr = m.quotaInfo.resetTime;
       let resetLabel = "Ready";
       let absResetLabel = "";
@@ -505,11 +505,19 @@ var QuotaService = class {
         themeColor: m.label.includes("Gemini") ? "#40C4FF" : m.label.includes("Claude") ? "#FFAB40" : "#69F0AE"
       };
     });
+    const quotaMap = /* @__PURE__ */ new Map();
+    for (const q of rawQuotas) {
+      const cleanLabel = q.label.replace(/\s*\(Thinking\)/i, "").replace(/\s*\(Medium\)/i, "").replace(/\s*\(High\)/i, "").replace(/\s*\(Low\)/i, "").trim();
+      const existing = quotaMap.get(cleanLabel);
+      if (!existing || q.remaining < existing.remaining) {
+        quotaMap.set(cleanLabel, { ...q, label: cleanLabel });
+      }
+    }
     return {
       name: user?.name || "User",
       email: user?.email || "",
       tier: user?.userTier?.name || user?.planStatus?.planInfo?.planName || "Free",
-      quotas
+      quotas: Array.from(quotaMap.values())
     };
   }
   // ─── [ADDED] Claude Code Status ───────────────────────────────────────────
@@ -971,6 +979,18 @@ function formatTime(t) {
   if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h ${m}m`;
   return `${h}h ${m}m`;
 }
+function formatShortReset(t) {
+  if (!t || t === "Ready" || t === "Refreshing...") return "";
+  const hMatch = t.match(/(\d+)h/);
+  const mMatch = t.match(/(\d+)m/);
+  const h = hMatch ? parseInt(hMatch[1]) : 0;
+  const m = mMatch ? parseInt(mMatch[1]) : 0;
+  if (h >= 24) return `${Math.floor(h / 24)}d`;
+  if (h > 0 && m > 0) return `${h}h${m}m`;
+  if (h > 0) return `${h}h`;
+  if (m > 0) return `${m}m`;
+  return t.replace(/\s+/g, "");
+}
 function getQuotaColor(pct) {
   if (pct > 50) return { hex: "#10b981", dot: "\u{1F7E2}" };
   if (pct > 20) return { hex: "#f59e0b", dot: "\u{1F7E1}" };
@@ -1022,24 +1042,41 @@ var refreshTimer = null;
 var lastRefreshAt = 0;
 var notifiedModels = /* @__PURE__ */ new Set();
 function autoDetectGroups(quotas) {
-  const groupMap = /* @__PURE__ */ new Map();
+  const geminiModels = [];
+  const claudeGptModels = [];
+  const otherModels = [];
   for (const q of quotas) {
-    const label = q.label;
-    let groupKey;
-    if (label.startsWith("Gemini")) {
-      const match = label.match(/^(Gemini [\d.]+ \w+)/);
-      groupKey = match ? match[1] : "Gemini";
+    if (q.label.startsWith("Gemini")) {
+      geminiModels.push(q.label);
+    } else if (q.label.startsWith("Claude") || q.label.startsWith("GPT")) {
+      claudeGptModels.push(q.label);
     } else {
-      groupKey = "Claude/GPT";
+      otherModels.push(q.label);
     }
-    if (!groupMap.has(groupKey)) groupMap.set(groupKey, []);
-    groupMap.get(groupKey).push(label);
   }
-  return Array.from(groupMap.entries()).map(([key, models], i) => ({
-    id: `g${i}`,
-    title: key.toUpperCase(),
-    models
-  }));
+  const groups = [];
+  if (geminiModels.length > 0) {
+    groups.push({
+      id: "gemini",
+      title: "GEMINI MODELS",
+      models: geminiModels
+    });
+  }
+  if (claudeGptModels.length > 0) {
+    groups.push({
+      id: "claude_gpt",
+      title: "CLAUDE / GPT",
+      models: claudeGptModels
+    });
+  }
+  if (otherModels.length > 0) {
+    groups.push({
+      id: "other",
+      title: "OTHER",
+      models: otherModels
+    });
+  }
+  return groups;
 }
 function activate(context) {
   const logger = vscode5.window.createOutputChannel("Auto Quota Antigravity");
@@ -1105,70 +1142,101 @@ function activate(context) {
 function escapeXml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+function formatCleanModelName(label) {
+  return label.replace(/\s*\(Thinking\)/i, "").replace(/\s*\(Medium\)/i, "").replace(/\s*\(High\)/i, "").replace(/\s*\(Low\)/i, "").trim();
+}
+function getStatusBarLabel(groupTitle, isClaudeCli) {
+  if (isClaudeCli) return "Claude CLI";
+  const upper = groupTitle.toUpperCase().trim();
+  if (upper.includes("GEMINI") && upper.includes("PRO")) return "Gemini Pro";
+  if (upper.includes("GEMINI") && upper.includes("FLASH")) return "Gemini Flash";
+  if (upper.includes("GEMINI")) return "Gemini";
+  if (upper.includes("CLAUDE")) return "Claude";
+  if (upper.includes("CODEX")) return "Codex";
+  return groupTitle.split("/")[0].trim();
+}
 function buildTooltipSVG(data) {
   const rowHeight = 30;
-  const groupHeaderHeight = 22;
-  const padding = 15;
-  const width = 400;
+  const groupHeaderHeight = 24;
+  const padding = 16;
+  const width = 420;
   let contentHtml = "";
-  let currentY = padding + 5;
-  const renderGroupSection = (title, quotas) => {
+  let currentY = padding + 22;
+  let minHealth = 100;
+  const checkHealth = (quotas) => {
+    if (!quotas) return;
+    for (const q of quotas) {
+      if (isPercentQuota(q) && q.remaining < minHealth) {
+        minHealth = q.remaining;
+      }
+    }
+  };
+  checkHealth(data.antigravity?.quotas);
+  checkHealth(data.claude?.quotas);
+  checkHealth(data.codex?.quotas);
+  const badgeColor = minHealth > 50 ? "#10B981" : minHealth > 20 ? "#F59E0B" : "#EF4444";
+  const badgeText = minHealth > 50 ? "ALL NORMAL" : minHealth > 20 ? "MODERATE" : "LOW QUOTA";
+  contentHtml += `<text x="${padding}" y="${padding + 10}" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="800" fill="#94A3B8" letter-spacing="0.5">AI QUOTA OVERVIEW</text>`;
+  contentHtml += `<rect x="${width - padding - 82}" y="${padding - 2}" width="82" height="17" rx="8.5" fill="${badgeColor}" fill-opacity="0.15" stroke="${badgeColor}" stroke-opacity="0.4" stroke-width="1"/>`;
+  contentHtml += `<circle cx="${width - padding - 73}" cy="${padding + 6.5}" r="2.5" fill="${badgeColor}"/>`;
+  contentHtml += `<text x="${width - padding - 65}" y="${padding + 10}" font-family="system-ui, -apple-system, sans-serif" font-size="8.5" font-weight="700" fill="${badgeColor}">${badgeText}</text>`;
+  const renderGroupSection = (title, quotas, accentColor = "#64748B") => {
     if (!quotas || quotas.length === 0) return;
-    contentHtml += `<text x="${padding}" y="${currentY + 12}" font-family="sans-serif" font-size="10" font-weight="800" fill="#4B5563" text-transform="uppercase">${escapeXml(title)}</text>`;
+    contentHtml += `<text x="${padding}" y="${currentY + 12}" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="800" fill="${accentColor}" letter-spacing="0.5">${escapeXml(title)}</text>`;
     currentY += groupHeaderHeight;
     quotas.forEach((q) => {
       const pct = Math.round(q.remaining);
       const isPercent = isPercentQuota(q);
       const color = isPercent ? getQuotaColor(pct) : { hex: "#6B7280", dot: "" };
       const time = formatTime(q.resetTime);
-      contentHtml += `<rect x="${padding - 5}" y="${currentY}" width="${width - padding * 2 + 10}" height="${rowHeight - 4}" rx="6" fill="#FFFFFF" fill-opacity="0.03"/>`;
-      contentHtml += `<circle cx="${padding + 8}" cy="${currentY + 13}" r="3.5" fill="${color.hex}"/>`;
-      const cleanName = q.label.replace(" (Thinking)", "").replace(" (Medium)", "");
-      contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="sans-serif" font-size="11" font-weight="600" fill="#9CA3AF">${escapeXml(cleanName)}</text>`;
-      const barX = 180;
-      const barWidth = 60;
+      const cleanName = formatCleanModelName(q.label);
+      contentHtml += `<rect x="${padding}" y="${currentY}" width="${width - padding * 2}" height="${rowHeight - 4}" rx="6" fill="#FFFFFF" fill-opacity="0.035"/>`;
+      contentHtml += `<circle cx="${padding + 10}" cy="${currentY + 13}" r="3.5" fill="${color.hex}"/>`;
+      contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#E2E8F0">${escapeXml(cleanName)}</text>`;
+      const barX = 185;
+      const barWidth = 65;
       if (!isPercent) {
       } else if (q.style === "fluid") {
-        const fillWidth = pct / 100 * barWidth;
-        contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${barWidth}" height="4" rx="2" fill="#FFFFFF" fill-opacity="0.1"/>`;
-        contentHtml += `<rect x="${barX}" y="${currentY + 12}" width="${fillWidth}" height="4" rx="2" fill="${color.hex}" fill-opacity="0.9"/>`;
+        const fillWidth = Math.max(2, pct / 100 * barWidth);
+        contentHtml += `<rect x="${barX}" y="${currentY + 11}" width="${barWidth}" height="4" rx="2" fill="#FFFFFF" fill-opacity="0.08"/>`;
+        contentHtml += `<rect x="${barX}" y="${currentY + 11}" width="${fillWidth}" height="4" rx="2" fill="${color.hex}" fill-opacity="0.95"/>`;
       } else {
-        const segWidth = 10;
-        const segGap = 2;
+        const segWidth = 11;
+        const segGap = 2.5;
         const filled = Math.min(5, Math.ceil(pct / 20));
         for (let i = 0; i < 5; i++) {
-          const opacity = i < filled ? 0.9 : 0.15;
-          contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 12}" width="${segWidth}" height="4" rx="1" fill="${color.hex}" fill-opacity="${opacity}"/>`;
+          const opacity = i < filled ? 0.95 : 0.12;
+          contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 11}" width="${segWidth}" height="4" rx="1.5" fill="${color.hex}" fill-opacity="${opacity}"/>`;
         }
       }
-      const pctX = 250;
+      const pctX = 262;
       const centerText = q.displayValue !== void 0 ? q.displayValue : `${pct}%`;
-      contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="11" font-weight="bold" fill="#FFFFFF">${escapeXml(centerText)}</text>`;
-      const fullTime = `${time} ${q.absResetTime || ""}`.trim();
-      const timeX = 285;
-      contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="monospace" font-size="10" font-weight="bold" fill="#FFFFFF">${escapeXml(fullTime)}</text>`;
+      contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" font-weight="bold" fill="#F8FAFC">${escapeXml(centerText)}</text>`;
+      const fullTime = isPercent ? q.absResetTime ? `${time} ${q.absResetTime}`.trim() : time === "Ready" ? "Ready" : time : "";
+      const timeX = 305;
+      contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9.5" font-weight="500" fill="#94A3B8">${escapeXml(fullTime)}</text>`;
       currentY += rowHeight;
     });
-    contentHtml += `<line x1="${padding}" y1="${currentY - 5}" x2="${width - padding}" y2="${currentY - 5}" stroke="#2D333D" stroke-width="1" stroke-opacity="0.5"/>`;
+    contentHtml += `<line x1="${padding}" y1="${currentY - 4}" x2="${width - padding}" y2="${currentY - 4}" stroke="#252C3F" stroke-width="1" stroke-opacity="0.6"/>`;
     currentY += 4;
   };
   if (data.antigravity?.quotas) {
     const groups = autoDetectGroups(data.antigravity.quotas);
     groups.forEach((group) => {
       const members = data.antigravity.quotas.filter((q) => group.models.includes(q.label));
-      renderGroupSection(group.title, members);
+      renderGroupSection(`ANTIGRAVITY \xB7 ${group.title}`, members, "#38BDF8");
     });
   }
   if (data.claude?.quotas) {
-    renderGroupSection("CLAUDE CODE", data.claude.quotas);
+    renderGroupSection("CLAUDE CODE (CLI)", data.claude.quotas, "#FB923C");
   }
   if (data.codex?.quotas) {
-    renderGroupSection("CODEX", data.codex.quotas);
+    renderGroupSection("OPENAI CODEX", data.codex.quotas, "#4ADE80");
   }
-  const totalHeight = currentY + 5;
+  const totalHeight = currentY + 6;
   return `
     <svg width="${width}" height="${totalHeight}" viewBox="0 0 ${width} ${totalHeight}" xmlns="http://www.w3.org/2000/svg">
-        <rect width="${width}" height="${totalHeight}" rx="10" fill="#1a1c23" stroke="#2d333d" stroke-width="1"/>
+        <rect width="${width}" height="${totalHeight}" rx="12" fill="#12151E" stroke="#252C3F" stroke-width="1.2"/>
         ${contentHtml}
     </svg>`;
 }
@@ -1181,39 +1249,95 @@ function refreshStatusBar() {
       const members = latestQuotaData.antigravity.quotas.filter((q) => g.models.includes(q.label));
       if (members.length === 0) continue;
       const avg = members.reduce((acc, curr) => acc + curr.remaining, 0) / members.length;
-      const shortName = g.title.replace("GEMINI ", "G").replace(" PRO", "P").replace(" FLASH", "F").split("/")[0];
-      const dot = avg > 50 ? "\u{1F7E2}" : avg > 20 ? "\u{1F7E1}" : "\u{1F534}";
-      segments.push({ text: `${dot} ${shortName} ${Math.round(avg)}%`, dot, health: avg });
+      const pct = Math.round(avg);
+      const color = getQuotaColor(avg);
+      const label = getStatusBarLabel(g.title, false);
+      const resettingMember = members.find((m) => m.resetTime && m.resetTime !== "Ready" && m.resetTime !== "Refreshing...");
+      const resetShort = formatShortReset(resettingMember?.resetTime);
+      segments.push({
+        label,
+        pct,
+        dot: color.dot,
+        resetText: resetShort,
+        health: avg
+      });
     }
   }
-  const pushService = (name2, status) => {
-    if (!status?.isAuthenticated || !status.quotas?.length) return;
-    const q = status.quotas.find(isPercentQuota);
-    if (!q) return;
-    const color = getQuotaColor(q.remaining);
-    const pct = Math.round(q.remaining);
-    segments.push({ text: `${color.dot} ${name2} ${pct}%`, dot: color.dot, health: q.remaining });
-  };
-  pushService("Claude", latestQuotaData.claude);
-  pushService("Codex", latestQuotaData.codex);
+  if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length) {
+    const q = latestQuotaData.claude.quotas.find(isPercentQuota);
+    if (q) {
+      const pct = Math.round(q.remaining);
+      const color = getQuotaColor(q.remaining);
+      const resetShort = formatShortReset(q.resetTime);
+      segments.push({
+        label: "Claude CLI",
+        pct,
+        dot: color.dot,
+        resetText: resetShort,
+        health: q.remaining
+      });
+    }
+  }
+  if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length) {
+    const q = latestQuotaData.codex.quotas.find(isPercentQuota);
+    if (q) {
+      const pct = Math.round(q.remaining);
+      const color = getQuotaColor(q.remaining);
+      const resetShort = formatShortReset(q.resetTime);
+      segments.push({
+        label: "Codex",
+        pct,
+        dot: color.dot,
+        resetText: resetShort,
+        health: q.remaining
+      });
+    }
+  }
   const mode = vscode5.workspace.getConfiguration("sqm").get("statusBar.mode") || "full";
   let text = "Auto Quota Antigravity";
+  let minHealth = 100;
+  const formatSegment = (s, includeReset = true) => {
+    if (includeReset && s.pct < 100 && s.resetText) {
+      return `${s.dot} ${s.label} ${s.pct}% (${s.resetText})`;
+    }
+    return `${s.dot} ${s.label} ${s.pct}%`;
+  };
   if (segments.length > 0) {
     const worst = segments.reduce((a, b) => b.health < a.health ? b : a);
-    if (mode === "dot") text = worst.dot;
-    else if (mode === "compact") text = worst.text;
-    else text = segments.map((s) => s.text).join("  |  ");
+    minHealth = worst.health;
+    if (mode === "dot") {
+      text = worst.health < 100 ? `${worst.dot} ${worst.pct}%` : `${worst.dot} 100%`;
+    } else if (mode === "compact") {
+      if (worst.health < 100) {
+        text = formatSegment(worst, true);
+      } else {
+        text = `\u{1F7E2} All Quotas 100%`;
+      }
+    } else {
+      text = segments.map((s) => formatSegment(s, true)).join("  \xB7  ");
+    }
   }
-  statusBarItem.text = `$(dashboard)  ${text}`;
+  if (minHealth <= 20) {
+    statusBarItem.backgroundColor = new vscode5.ThemeColor("statusBarItem.warningBackground");
+    statusBarItem.color = new vscode5.ThemeColor("statusBarItem.warningForeground");
+    statusBarItem.text = `$(warning)  ${text}`;
+  } else {
+    statusBarItem.backgroundColor = void 0;
+    statusBarItem.color = void 0;
+    statusBarItem.text = `$(dashboard)  ${text}`;
+  }
   const svg = buildTooltipSVG(latestQuotaData);
   const base64 = Buffer.from(svg).toString("base64");
   const tooltip = new vscode5.MarkdownString();
+  tooltip.isTrusted = true;
+  tooltip.supportHtml = true;
   tooltip.appendMarkdown(`![Quota Info](data:image/svg+xml;base64,${base64})
 
 `);
   const name = latestQuotaData.antigravity?.name || "User";
-  tooltip.appendMarkdown(`&nbsp;&nbsp;&nbsp;&nbsp;**${name}** \xB7 [Dashboard](command:sqm.sidebar.focus)`);
-  tooltip.isTrusted = true;
+  const tier = latestQuotaData.antigravity?.tier || "";
+  const tierDisplay = tier ? ` (${tier})` : "";
+  tooltip.appendMarkdown(`&nbsp;&nbsp;\u{1F464} **${name}**${tierDisplay} &nbsp;&nbsp;\xB7&nbsp;&nbsp; [\u{1F504} Refresh](command:sqm.refresh) &nbsp;|&nbsp; [\u{1F4CA} Dashboard](command:sqm.sidebar.focus) &nbsp;|&nbsp; [\u2699\uFE0F Settings](command:sqm.menu)`);
   statusBarItem.tooltip = tooltip;
 }
 function setLatestData(data) {
