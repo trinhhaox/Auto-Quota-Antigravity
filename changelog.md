@@ -1,6 +1,14 @@
 # Changelog - AG Manager
 
+## [1.9.4] - 2026-08-22
+
+### Fix Status Bar Overflow & Layout Collision
+- **Khắc phục triệt để lỗi tràn & chồng đè thanh trạng thái:** Gom nhóm đại diện siêu gọn trên Status Bar (`Gemini`, `Claude`, `CLI`, `Codex`) với độ dài vừa vặn (~45 ký tự), không còn bị các widget góc phải IDE đè lên hay bị cắt cụt chữ.
+- **Loại bỏ thanh nền vàng chói:** Sử dụng icon `$(warning)` tinh tế thay vì đổi toàn bộ background thanh status bar, giữ nguyên tính thẩm mỹ Dark theme của IDE.
+- **Mở rộng kích thước Tooltip SVG (width 440px):** Đảm bảo tất cả model và thời gian reset chi tiết đều hiển thị 100% rõ ràng, thoáng đãng khi rê chuột.
+
 ## [1.9.3] - 2026-08-22
+
 
 ### Deduplication & Smart Grouping
 - **Khử trùng lặp model hoàn toàn:** Loại bỏ việc lặp lại 3 lần các model biến thể Reasoning / Thinking (`Low`, `Medium`, `High`) của Gemini (như Gemini 3.5 Flash, Gemini 3.7 Flash, Gemini 3.6 Flash, Gemini 3.1 Pro) do dùng chung 1 quota pool.

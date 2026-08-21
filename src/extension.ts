@@ -167,7 +167,7 @@ function buildTooltipSVG(data: DashboardData): string {
     const rowHeight = 30;
     const groupHeaderHeight = 24;
     const padding = 16;
-    const width = 420;
+    const width = 440;
 
     let contentHtml = '';
     let currentY = padding + 22;
@@ -213,8 +213,8 @@ function buildTooltipSVG(data: DashboardData): string {
 
             contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#E2E8F0">${escapeXml(cleanName)}</text>`;
 
-            const barX = 185;
-            const barWidth = 65;
+            const barX = 180;
+            const barWidth = 60;
 
             if (!isPercent) {
                 // No bar for informational rows
@@ -223,7 +223,7 @@ function buildTooltipSVG(data: DashboardData): string {
                 contentHtml += `<rect x="${barX}" y="${currentY + 11}" width="${barWidth}" height="4" rx="2" fill="#FFFFFF" fill-opacity="0.08"/>`;
                 contentHtml += `<rect x="${barX}" y="${currentY + 11}" width="${fillWidth}" height="4" rx="2" fill="${color.hex}" fill-opacity="0.95"/>`;
             } else {
-                const segWidth = 11;
+                const segWidth = 10;
                 const segGap = 2.5;
                 const filled = Math.min(5, Math.ceil(pct / 20));
                 for (let i = 0; i < 5; i++) {
@@ -232,12 +232,12 @@ function buildTooltipSVG(data: DashboardData): string {
                 }
             }
 
-            const pctX = 262;
+            const pctX = 252;
             const centerText = q.displayValue !== undefined ? q.displayValue : `${pct}%`;
             contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" font-weight="bold" fill="#F8FAFC">${escapeXml(centerText)}</text>`;
 
             const fullTime = isPercent ? (q.absResetTime ? `${time} ${q.absResetTime}`.trim() : (time === 'Ready' ? 'Ready' : time)) : '';
-            const timeX = 305;
+            const timeX = 295;
             contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9.5" font-weight="500" fill="#94A3B8">${escapeXml(fullTime)}</text>`;
 
             currentY += rowHeight;
@@ -272,31 +272,42 @@ function buildTooltipSVG(data: DashboardData): string {
     </svg>`;
 }
 
+
 function refreshStatusBar() {
     if (!latestQuotaData) return;
 
     const segments: StatusSegment[] = [];
 
-    // 1. Antigravity IDE Groups
+    // 1. Antigravity IDE - Gemini Models (consolidated to single representative segment)
     if (latestQuotaData.antigravity?.quotas) {
-        const groups = autoDetectGroups(latestQuotaData.antigravity.quotas);
-        for (const g of groups) {
-            const members = latestQuotaData.antigravity.quotas.filter((q) => g.models.includes(q.label));
-            if (members.length === 0) continue;
-            const avg = members.reduce((acc, curr) => acc + curr.remaining, 0) / members.length;
-            const pct = Math.round(avg);
-            const color = getQuotaColor(avg);
-            const label = getStatusBarLabel(g.title, false);
-
-            const resettingMember = members.find(m => m.resetTime && m.resetTime !== 'Ready' && m.resetTime !== 'Refreshing...');
-            const resetShort = formatShortReset(resettingMember?.resetTime);
-
+        const geminiQuotas = latestQuotaData.antigravity.quotas.filter(q => q.label.startsWith('Gemini') && isPercentQuota(q));
+        if (geminiQuotas.length > 0) {
+            const minGemini = geminiQuotas.reduce((a, b) => (b.remaining < a.remaining ? b : a));
+            const pct = Math.round(minGemini.remaining);
+            const color = getQuotaColor(minGemini.remaining);
+            const resetShort = formatShortReset(minGemini.resetTime);
             segments.push({
-                label,
+                label: 'Gemini',
                 pct,
                 dot: color.dot,
                 resetText: resetShort,
-                health: avg
+                health: minGemini.remaining
+            });
+        }
+
+        // Antigravity IDE - Claude / GPT Models (consolidated to representative segment)
+        const claudeGptQuotas = latestQuotaData.antigravity.quotas.filter(q => (q.label.startsWith('Claude') || q.label.startsWith('GPT')) && isPercentQuota(q));
+        if (claudeGptQuotas.length > 0) {
+            const minClaudeGpt = claudeGptQuotas.reduce((a, b) => (b.remaining < a.remaining ? b : a));
+            const pct = Math.round(minClaudeGpt.remaining);
+            const color = getQuotaColor(minClaudeGpt.remaining);
+            const resetShort = formatShortReset(minClaudeGpt.resetTime);
+            segments.push({
+                label: 'Claude',
+                pct,
+                dot: color.dot,
+                resetText: resetShort,
+                health: minClaudeGpt.remaining
             });
         }
     }
@@ -309,7 +320,7 @@ function refreshStatusBar() {
             const color = getQuotaColor(q.remaining);
             const resetShort = formatShortReset(q.resetTime);
             segments.push({
-                label: 'Claude CLI',
+                label: 'CLI',
                 pct,
                 dot: color.dot,
                 resetText: resetShort,
@@ -318,7 +329,7 @@ function refreshStatusBar() {
         }
     }
 
-    // 3. OpenAI Codex (if authenticated)
+    // 3. OpenAI Codex (if authenticated and has percentage)
     if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length) {
         const q = latestQuotaData.codex.quotas.find(isPercentQuota);
         if (q) {
@@ -356,24 +367,23 @@ function refreshStatusBar() {
             if (worst.health < 100) {
                 text = formatSegment(worst, true);
             } else {
-                text = `🟢 All Quotas 100%`;
+                text = `🟢 All 100%`;
             }
         } else {
-            // Full mode: Clean middle-dot separation
-            text = segments.map(s => formatSegment(s, true)).join('  ·  ');
+            // Full mode: Compact middle-dot separation to prevent overlap
+            text = segments.map(s => formatSegment(s, true)).join(' · ');
         }
     }
 
-    // Dynamic alert styling when any quota drops <= 20%
+    // Visual Alert icon when any quota <= 20% without intrusive full-bar highlight
     if (minHealth <= 20) {
-        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-        statusBarItem.color = new vscode.ThemeColor('statusBarItem.warningForeground');
-        statusBarItem.text = `$(warning)  ${text}`;
+        statusBarItem.text = `$(warning) ${text}`;
     } else {
-        statusBarItem.backgroundColor = undefined;
-        statusBarItem.color = undefined;
-        statusBarItem.text = `$(dashboard)  ${text}`;
+        statusBarItem.text = `$(dashboard) ${text}`;
     }
+    statusBarItem.backgroundColor = undefined;
+    statusBarItem.color = undefined;
+
 
     const svg = buildTooltipSVG(latestQuotaData);
     const base64 = Buffer.from(svg).toString('base64');

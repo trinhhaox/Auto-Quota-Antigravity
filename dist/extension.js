@@ -1145,21 +1145,11 @@ function escapeXml(s) {
 function formatCleanModelName(label) {
   return label.replace(/\s*\(Thinking\)/i, "").replace(/\s*\(Medium\)/i, "").replace(/\s*\(High\)/i, "").replace(/\s*\(Low\)/i, "").trim();
 }
-function getStatusBarLabel(groupTitle, isClaudeCli) {
-  if (isClaudeCli) return "Claude CLI";
-  const upper = groupTitle.toUpperCase().trim();
-  if (upper.includes("GEMINI") && upper.includes("PRO")) return "Gemini Pro";
-  if (upper.includes("GEMINI") && upper.includes("FLASH")) return "Gemini Flash";
-  if (upper.includes("GEMINI")) return "Gemini";
-  if (upper.includes("CLAUDE")) return "Claude";
-  if (upper.includes("CODEX")) return "Codex";
-  return groupTitle.split("/")[0].trim();
-}
 function buildTooltipSVG(data) {
   const rowHeight = 30;
   const groupHeaderHeight = 24;
   const padding = 16;
-  const width = 420;
+  const width = 440;
   let contentHtml = "";
   let currentY = padding + 22;
   let minHealth = 100;
@@ -1193,15 +1183,15 @@ function buildTooltipSVG(data) {
       contentHtml += `<rect x="${padding}" y="${currentY}" width="${width - padding * 2}" height="${rowHeight - 4}" rx="6" fill="#FFFFFF" fill-opacity="0.035"/>`;
       contentHtml += `<circle cx="${padding + 10}" cy="${currentY + 13}" r="3.5" fill="${color.hex}"/>`;
       contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#E2E8F0">${escapeXml(cleanName)}</text>`;
-      const barX = 185;
-      const barWidth = 65;
+      const barX = 180;
+      const barWidth = 60;
       if (!isPercent) {
       } else if (q.style === "fluid") {
         const fillWidth = Math.max(2, pct / 100 * barWidth);
         contentHtml += `<rect x="${barX}" y="${currentY + 11}" width="${barWidth}" height="4" rx="2" fill="#FFFFFF" fill-opacity="0.08"/>`;
         contentHtml += `<rect x="${barX}" y="${currentY + 11}" width="${fillWidth}" height="4" rx="2" fill="${color.hex}" fill-opacity="0.95"/>`;
       } else {
-        const segWidth = 11;
+        const segWidth = 10;
         const segGap = 2.5;
         const filled = Math.min(5, Math.ceil(pct / 20));
         for (let i = 0; i < 5; i++) {
@@ -1209,11 +1199,11 @@ function buildTooltipSVG(data) {
           contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 11}" width="${segWidth}" height="4" rx="1.5" fill="${color.hex}" fill-opacity="${opacity}"/>`;
         }
       }
-      const pctX = 262;
+      const pctX = 252;
       const centerText = q.displayValue !== void 0 ? q.displayValue : `${pct}%`;
       contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" font-weight="bold" fill="#F8FAFC">${escapeXml(centerText)}</text>`;
       const fullTime = isPercent ? q.absResetTime ? `${time} ${q.absResetTime}`.trim() : time === "Ready" ? "Ready" : time : "";
-      const timeX = 305;
+      const timeX = 295;
       contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9.5" font-weight="500" fill="#94A3B8">${escapeXml(fullTime)}</text>`;
       currentY += rowHeight;
     });
@@ -1244,22 +1234,32 @@ function refreshStatusBar() {
   if (!latestQuotaData) return;
   const segments = [];
   if (latestQuotaData.antigravity?.quotas) {
-    const groups = autoDetectGroups(latestQuotaData.antigravity.quotas);
-    for (const g of groups) {
-      const members = latestQuotaData.antigravity.quotas.filter((q) => g.models.includes(q.label));
-      if (members.length === 0) continue;
-      const avg = members.reduce((acc, curr) => acc + curr.remaining, 0) / members.length;
-      const pct = Math.round(avg);
-      const color = getQuotaColor(avg);
-      const label = getStatusBarLabel(g.title, false);
-      const resettingMember = members.find((m) => m.resetTime && m.resetTime !== "Ready" && m.resetTime !== "Refreshing...");
-      const resetShort = formatShortReset(resettingMember?.resetTime);
+    const geminiQuotas = latestQuotaData.antigravity.quotas.filter((q) => q.label.startsWith("Gemini") && isPercentQuota(q));
+    if (geminiQuotas.length > 0) {
+      const minGemini = geminiQuotas.reduce((a, b) => b.remaining < a.remaining ? b : a);
+      const pct = Math.round(minGemini.remaining);
+      const color = getQuotaColor(minGemini.remaining);
+      const resetShort = formatShortReset(minGemini.resetTime);
       segments.push({
-        label,
+        label: "Gemini",
         pct,
         dot: color.dot,
         resetText: resetShort,
-        health: avg
+        health: minGemini.remaining
+      });
+    }
+    const claudeGptQuotas = latestQuotaData.antigravity.quotas.filter((q) => (q.label.startsWith("Claude") || q.label.startsWith("GPT")) && isPercentQuota(q));
+    if (claudeGptQuotas.length > 0) {
+      const minClaudeGpt = claudeGptQuotas.reduce((a, b) => b.remaining < a.remaining ? b : a);
+      const pct = Math.round(minClaudeGpt.remaining);
+      const color = getQuotaColor(minClaudeGpt.remaining);
+      const resetShort = formatShortReset(minClaudeGpt.resetTime);
+      segments.push({
+        label: "Claude",
+        pct,
+        dot: color.dot,
+        resetText: resetShort,
+        health: minClaudeGpt.remaining
       });
     }
   }
@@ -1270,7 +1270,7 @@ function refreshStatusBar() {
       const color = getQuotaColor(q.remaining);
       const resetShort = formatShortReset(q.resetTime);
       segments.push({
-        label: "Claude CLI",
+        label: "CLI",
         pct,
         dot: color.dot,
         resetText: resetShort,
@@ -1311,21 +1311,19 @@ function refreshStatusBar() {
       if (worst.health < 100) {
         text = formatSegment(worst, true);
       } else {
-        text = `\u{1F7E2} All Quotas 100%`;
+        text = `\u{1F7E2} All 100%`;
       }
     } else {
-      text = segments.map((s) => formatSegment(s, true)).join("  \xB7  ");
+      text = segments.map((s) => formatSegment(s, true)).join(" \xB7 ");
     }
   }
   if (minHealth <= 20) {
-    statusBarItem.backgroundColor = new vscode5.ThemeColor("statusBarItem.warningBackground");
-    statusBarItem.color = new vscode5.ThemeColor("statusBarItem.warningForeground");
-    statusBarItem.text = `$(warning)  ${text}`;
+    statusBarItem.text = `$(warning) ${text}`;
   } else {
-    statusBarItem.backgroundColor = void 0;
-    statusBarItem.color = void 0;
-    statusBarItem.text = `$(dashboard)  ${text}`;
+    statusBarItem.text = `$(dashboard) ${text}`;
   }
+  statusBarItem.backgroundColor = void 0;
+  statusBarItem.color = void 0;
   const svg = buildTooltipSVG(latestQuotaData);
   const base64 = Buffer.from(svg).toString("base64");
   const tooltip = new vscode5.MarkdownString();
