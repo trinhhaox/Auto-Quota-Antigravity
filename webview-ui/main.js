@@ -12,6 +12,12 @@ window.addEventListener("message", (event) => {
             renderDashboard(message.data);
             break;
         case "loading":
+            document.getElementById('quota-list').innerHTML = `
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                    <span>Refreshing quotas...</span>
+                </div>
+            `;
             break;
         case "settings":
             renderSettingsData(message.settings);
@@ -23,8 +29,16 @@ window.addEventListener("message", (event) => {
 vscode.postMessage({ type: "onRefresh" });
 
 document.getElementById('refresh-btn').addEventListener('click', () => {
-    document.getElementById('quota-list').innerHTML = '<div class="loading">Refreshing…</div>';
+    const btn = document.getElementById('refresh-btn');
+    btn.classList.add('rotating');
+    document.getElementById('quota-list').innerHTML = `
+        <div class="loading-state">
+            <div class="spinner"></div>
+            <span>Fetching live quotas...</span>
+        </div>
+    `;
     vscode.postMessage({ type: 'onRefresh' });
+    setTimeout(() => btn.classList.remove('rotating'), 800);
 });
 
 // Settings toggle
@@ -36,29 +50,40 @@ document.getElementById('settings-btn').addEventListener('click', () => {
     }
 });
 
-// Per-service accent color — makes each group instantly distinguishable
-const SERVICE_ACCENT = {
-    Antigravity: '#40c4ff',
-    Claude: '#d97757',
-    Codex: '#10a37f'
+// Per-service accent color & icon
+const SERVICE_META = {
+    Antigravity: { accent: '#38BDF8', icon: '⚡', title: 'ANTIGRAVITY' },
+    Claude: { accent: '#FB923C', icon: '🟧', title: 'CLAUDE CODE' },
+    Codex: { accent: '#4ADE80', icon: '🟩', title: 'OPENAI CODEX' }
 };
 
 // data: DashboardData { antigravity, claude, codex } (+ history)
 function renderDashboard(data) {
     if (!data) {
         document.getElementById('user-info').innerHTML = '';
-        document.getElementById('quota-list').innerHTML = '<p class="error-msg">Local server not found.<br>Ensure Antigravity IDE is running.</p>';
+        document.getElementById('quota-list').innerHTML = `
+            <div class="error-card">
+                <div class="error-icon">⚠️</div>
+                <div class="error-title">Antigravity Server Offline</div>
+                <div class="error-desc">Ensure Antigravity IDE is running to monitor model quotas.</div>
+            </div>
+        `;
         return;
     }
 
     const ag = data.antigravity;
     if (ag) {
+        const tier = (ag.tier || 'Free').toUpperCase();
+        const initial = (ag.name || 'U').charAt(0).toUpperCase();
         document.getElementById('user-info').innerHTML = `
             <div class="user-card">
-                <div class="avatar">${escapeHtml(ag.name.charAt(0))}</div>
+                <div class="avatar">${escapeHtml(initial)}</div>
                 <div class="user-details">
-                    <div class="user-name">${escapeHtml(ag.name)}</div>
-                    <div class="user-sub">${escapeHtml(ag.tier)} &bull; ${escapeHtml(ag.email)}</div>
+                    <div class="user-row-top">
+                        <span class="user-name">${escapeHtml(ag.name || 'User')}</span>
+                        <span class="tier-badge ${tier.toLowerCase()}">${escapeHtml(tier)}</span>
+                    </div>
+                    <div class="user-email">${escapeHtml(ag.email || '')}</div>
                 </div>
             </div>
         `;
@@ -67,21 +92,112 @@ function renderDashboard(data) {
     }
 
     let html = '';
-    if (ag) {
-        html += renderServiceGroup('ANTIGRAVITY', ag, 'Antigravity', data.history);
+
+    // 1. Structured Limit Groups Overview (Gemini Models & Claude/GPT Models)
+    if (ag && ag.limitGroups && ag.limitGroups.length > 0) {
+        html += ag.limitGroups.map(group => renderLimitGroup(group)).join('');
     }
+
+    // 2. Detailed Model Quotas & 5-Hour Session Bars
+    if (ag && ag.quotas && ag.quotas.length > 0) {
+        html += renderServiceGroup('Antigravity', ag, data.history, 'MODEL BREAKDOWN (5H SESSION)');
+    }
+
+    // 3. External Services (Claude Code & Codex if logged in)
     if (data.claude) {
-        html += renderServiceGroup('CLAUDE CODE', data.claude, 'Claude', data.history);
+        html += renderServiceGroup('Claude', data.claude, data.history);
     }
     if (data.codex) {
-        html += renderServiceGroup('CODEX', data.codex, 'Codex', data.history);
+        html += renderServiceGroup('Codex', data.codex, data.history);
     }
 
     if (!html) {
-        html = '<p class="error-msg">No services detected.<br>Ensure Antigravity IDE is running, or sign in to Claude Code / Codex.</p>';
+        html = `
+            <div class="error-card">
+                <div class="error-icon">🔍</div>
+                <div class="error-title">No AI Services Active</div>
+                <div class="error-desc">Ensure Antigravity IDE is running, or sign in to Claude Code / Codex.</div>
+            </div>
+        `;
     }
     document.getElementById('quota-list').innerHTML = html;
 }
+
+function createDonutSvg(pct) {
+    const size = 26;
+    const strokeWidth = 3.2;
+    const radius = (size - strokeWidth) / 2;
+    const circumference = 2 * Math.PI * radius;
+    const clampedPct = Math.max(0, Math.min(100, pct));
+    const offset = circumference - (clampedPct / 100) * circumference;
+    const color = healthColor(clampedPct);
+
+    return `
+        <svg class="donut-chart" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+            <circle class="donut-bg" cx="${size/2}" cy="${size/2}" r="${radius}" stroke="rgba(255, 255, 255, 0.1)" stroke-width="${strokeWidth}" fill="none"/>
+            ${clampedPct > 0 ? `
+                <circle class="donut-fill" cx="${size/2}" cy="${size/2}" r="${radius}" 
+                    stroke="${color}" stroke-width="${strokeWidth}" fill="none"
+                    stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"
+                    stroke-linecap="round"
+                    transform="rotate(-90 ${size/2} ${size/2})"/>
+            ` : `
+                <circle class="donut-empty" cx="${size/2}" cy="${size/2}" r="${radius}" 
+                    stroke="rgba(255, 255, 255, 0.16)" stroke-width="${strokeWidth}" fill="none"/>
+            `}
+        </svg>
+    `;
+}
+
+function renderLimitGroup(group) {
+    let rowsHtml = '';
+    group.items.forEach((item, index) => {
+        const isNotApplicable = item.notApplicable || (item.remaining === 0 && item.label.includes('Five Hour'));
+        
+        let statRightHtml = '';
+        if (!isNotApplicable) {
+            statRightHtml = `
+                <div class="limit-stat">
+                    <span class="limit-pct">${item.remaining}%</span>
+                    ${createDonutSvg(item.remaining)}
+                </div>
+            `;
+        } else if (item.label.includes('Weekly')) {
+            statRightHtml = `
+                <div class="limit-stat">
+                    <span class="limit-pct">0%</span>
+                    ${createDonutSvg(0)}
+                </div>
+            `;
+        }
+
+        const divider = index < group.items.length - 1 ? '<div class="limit-row-divider"></div>' : '';
+
+        rowsHtml += `
+            <div class="limit-row">
+                <div class="limit-row-header">
+                    <span class="limit-name">${escapeHtml(item.label)}</span>
+                    ${statRightHtml}
+                </div>
+                <div class="limit-desc">${escapeHtml(item.description)}</div>
+            </div>
+            ${divider}
+        `;
+    });
+
+    return `
+        <div class="limit-group">
+            <div class="limit-group-header">
+                <span class="limit-group-title">${escapeHtml(group.title)}</span>
+                <span class="info-icon" title="${escapeHtml(group.infoTooltip || '')}">ⓘ</span>
+            </div>
+            <div class="limit-card">
+                ${rowsHtml}
+            </div>
+        </div>
+    `;
+}
+
 
 // Five-stop health scale — full → empty maps green → lime → yellow → orange → red
 function healthColor(pct) {
@@ -97,35 +213,43 @@ function isPercentQuota(q) {
     return q.displayValue === undefined || String(q.displayValue).endsWith('%');
 }
 
-function renderServiceGroup(title, status, serviceKey, history) {
-    if (!status) { return ''; }
+function renderServiceGroup(serviceKey, status, history, customTitle) {
+    if (!status) return '';
 
-    const accent = SERVICE_ACCENT[serviceKey] || 'var(--ui-border)';
-    const isAuthenticated = status.isAuthenticated !== false; // true if undefined (backward compat)
-    const infoLine = `${escapeHtml(status.tier)} &bull; ${escapeHtml(status.email)}`;
+    const meta = SERVICE_META[serviceKey] || { accent: '#64748B', icon: '🔹', title: serviceKey.toUpperCase() };
+    const displayTitle = customTitle || meta.title;
+    const isAuthenticated = status.isAuthenticated !== false;
+    const infoLine = `${escapeHtml(status.tier)} · ${escapeHtml(status.email)}`;
 
     // Group status dot = worst remaining % across percentage rows
     const pctRows = (status.quotas || []).filter(isPercentQuota);
     let dotHtml = '';
     if (isAuthenticated && !status.error && pctRows.length > 0) {
         const worst = Math.min(...pctRows.map(q => q.remaining));
-        dotHtml = `<span class="group-dot" style="background:${healthColor(worst)}"></span>`;
+        const dotColor = healthColor(worst);
+        dotHtml = `<span class="group-dot ${worst <= 20 ? 'pulse' : ''}" style="background:${dotColor};box-shadow:0 0 6px ${dotColor}88;"></span>`;
     }
 
     let gaugesHtml = '';
     if (status.error) {
-        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:8px 0;">${escapeHtml(status.error)}</p>`;
+        gaugesHtml = `<p class="error-msg">${escapeHtml(status.error)}</p>`;
     } else if (isAuthenticated && status.quotas && status.quotas.length > 0) {
         gaugesHtml = `<div class="gauge-grid">${status.quotas.map(q =>
             createGauge(q, historySeries(history, `${serviceKey}-${q.label}`))
         ).join('')}</div>`;
     } else if (!isAuthenticated) {
-        gaugesHtml = `<p class="error-msg" style="font-size:11px;padding:8px 0;">${escapeHtml(status.email)}</p>`;
+        gaugesHtml = `<p class="error-msg">${escapeHtml(status.email || 'Not authenticated')}</p>`;
     }
 
     return `
-        <div class="service-group" style="--accent:${accent}">
-            <div class="group-header">${dotHtml}<span>${escapeHtml(title)}</span></div>
+        <div class="service-group" style="--accent:${meta.accent};margin-top:6px;">
+            <div class="group-header">
+                <div class="group-title-wrap">
+                    <span class="group-icon">${meta.icon}</span>
+                    <span class="group-title">${escapeHtml(displayTitle)}</span>
+                </div>
+                ${dotHtml}
+            </div>
             <div class="service-info">${infoLine}</div>
             ${gaugesHtml}
         </div>

@@ -65,4 +65,34 @@ export function formatSessionResetText(resetTime?: string, absResetTime?: string
     return absResetTime ? `Resets in ${inText} ${absResetTime}` : `Resets in ${inText}`;
 }
 
+// Format duration as natural English text like IDE (e.g. "1 day, 16 hours", "4 hours, 38 minutes", "20 hours, 37 minutes")
+export function formatNaturalDuration(diffMs: number): string {
+    if (diffMs <= 0) return 'a few moments';
+    const totalMinutes = Math.floor(diffMs / 60000);
+    const days = Math.floor(totalMinutes / (24 * 60));
+    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+    const mins = totalMinutes % 60;
 
+    if (days > 0) {
+        const dayStr = `${days} day${days > 1 ? 's' : ''}`;
+        const hourStr = hours > 0 ? `, ${hours} hour${hours > 1 ? 's' : ''}` : '';
+        return `${dayStr}${hourStr}`;
+    }
+    if (hours > 0) {
+        const hourStr = `${hours} hour${hours > 1 ? 's' : ''}`;
+        const minStr = mins > 0 ? `, ${mins} minute${mins > 1 ? 's' : ''}` : '';
+        return `${hourStr}${minStr}`;
+    }
+    return `${mins} minute${mins > 1 ? 's' : ''}`;
+}
+
+export function formatNaturalDurationFromDate(dateStr?: string): string {
+    if (!dateStr || dateStr === 'Ready') return '';
+    try {
+        const resetDate = new Date(dateStr);
+        const diffMs = resetDate.getTime() - Date.now();
+        return formatNaturalDuration(diffMs);
+    } catch {
+        return '';
+    }
+}

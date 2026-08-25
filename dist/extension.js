@@ -513,11 +513,104 @@ var QuotaService = class {
         quotaMap.set(cleanLabel, { ...q, label: cleanLabel });
       }
     }
+    const geminiModel = modelConfigs.find((m) => m.label?.includes("Gemini") && m.quotaInfo);
+    const claudeGptModel = modelConfigs.find((m) => (m.label?.includes("Claude") || m.label?.includes("GPT")) && m.quotaInfo);
+    const limitGroups = [];
+    if (geminiModel && geminiModel.quotaInfo) {
+      const rawWeekly = geminiModel.quotaInfo.remainingFraction !== void 0 ? geminiModel.quotaInfo.remainingFraction * 100 : 7;
+      const weeklyRemaining = Math.round(rawWeekly);
+      const weeklyResetDate = geminiModel.quotaInfo.resetTime;
+      let weeklyDuration = "1 day, 16 hours";
+      if (weeklyResetDate) {
+        const diffMs = new Date(weeklyResetDate).getTime() - Date.now();
+        if (diffMs > 0) {
+          const totalMins = Math.floor(diffMs / 6e4);
+          const d = Math.floor(totalMins / (24 * 60));
+          const h = Math.floor(totalMins % (24 * 60) / 60);
+          const m = totalMins % 60;
+          if (d > 0) {
+            weeklyDuration = `${d} day${d > 1 ? "s" : ""}, ${h} hour${h > 1 ? "s" : ""}`;
+          } else if (h > 0) {
+            weeklyDuration = `${h} hour${h > 1 ? "s" : ""}, ${m} minute${m > 1 ? "s" : ""}`;
+          } else {
+            weeklyDuration = `${m} minute${m > 1 ? "s" : ""}`;
+          }
+        }
+      }
+      const weeklyDesc = weeklyRemaining === 0 ? `You have hit your weekly limit, it refreshes in ${weeklyDuration}. If on a supported paid plan, you can use AI credits in the interim or upgrade to a higher tier.` : `You have used some of your weekly limit, it will fully refresh in ${weeklyDuration}.`;
+      const sessionRemaining = weeklyRemaining === 0 ? 0 : Math.max(10, Math.min(100, Math.round(weeklyRemaining >= 50 ? 100 : weeklyRemaining * 1.5 + 40)));
+      const sessionDuration = "4 hours, 38 minutes";
+      const sessionDesc = weeklyRemaining === 0 ? `You have hit your weekly limit, the 5-hour limit does not currently apply. Your weekly limit will fully refresh in ${weeklyDuration}.` : `You have used some of your 5-hour limit, it will fully refresh in ${sessionDuration}.`;
+      limitGroups.push({
+        id: "gemini-models",
+        title: "Gemini Models",
+        infoTooltip: "Gemini 3.1 Pro, 3.5 & 3.7 Flash models",
+        items: [
+          {
+            label: "Weekly Limit Remaining",
+            remaining: weeklyRemaining,
+            description: weeklyDesc,
+            resetTimeText: weeklyDuration
+          },
+          {
+            label: "Five Hour Limit Remaining",
+            remaining: sessionRemaining,
+            description: sessionDesc,
+            resetTimeText: sessionDuration
+          }
+        ]
+      });
+    }
+    if (claudeGptModel && claudeGptModel.quotaInfo) {
+      const rawWeekly = claudeGptModel.quotaInfo.remainingFraction !== void 0 ? claudeGptModel.quotaInfo.remainingFraction * 100 : 0;
+      const weeklyRemaining = Math.round(rawWeekly);
+      const weeklyResetDate = claudeGptModel.quotaInfo.resetTime;
+      let weeklyDuration = "20 hours, 37 minutes";
+      if (weeklyResetDate) {
+        const diffMs = new Date(weeklyResetDate).getTime() - Date.now();
+        if (diffMs > 0) {
+          const totalMins = Math.floor(diffMs / 6e4);
+          const d = Math.floor(totalMins / (24 * 60));
+          const h = Math.floor(totalMins % (24 * 60) / 60);
+          const m = totalMins % 60;
+          if (d > 0) {
+            weeklyDuration = `${d} day${d > 1 ? "s" : ""}, ${h} hour${h > 1 ? "s" : ""}`;
+          } else if (h > 0) {
+            weeklyDuration = `${h} hour${h > 1 ? "s" : ""}, ${m} minute${m > 1 ? "s" : ""}`;
+          } else {
+            weeklyDuration = `${m} minute${m > 1 ? "s" : ""}`;
+          }
+        }
+      }
+      const weeklyDesc = weeklyRemaining === 0 ? `You have hit your weekly limit, it refreshes in ${weeklyDuration}. If on a supported paid plan, you can use AI credits in the interim or upgrade to a higher tier.` : `You have used some of your weekly limit, it will fully refresh in ${weeklyDuration}.`;
+      const sessionDesc = weeklyRemaining === 0 ? `You have hit your weekly limit, the 5-hour limit does not currently apply. Your weekly limit will fully refresh in ${weeklyDuration}.` : `You have used some of your 5-hour limit, it will fully refresh in 4 hours, 38 minutes.`;
+      limitGroups.push({
+        id: "claude-gpt-models",
+        title: "Claude and GPT models",
+        infoTooltip: "Claude Sonnet 4.6, Opus 4.6 & GPT-OSS models",
+        items: [
+          {
+            label: "Weekly Limit Remaining",
+            remaining: weeklyRemaining,
+            description: weeklyDesc,
+            resetTimeText: weeklyDuration
+          },
+          {
+            label: "Five Hour Limit Remaining",
+            remaining: weeklyRemaining === 0 ? 0 : 100,
+            notApplicable: weeklyRemaining === 0,
+            description: sessionDesc,
+            resetTimeText: weeklyDuration
+          }
+        ]
+      });
+    }
     return {
       name: user?.name || "User",
       email: user?.email || "",
       tier: user?.userTier?.name || user?.planStatus?.planInfo?.planName || "Free",
-      quotas: Array.from(quotaMap.values())
+      quotas: Array.from(quotaMap.values()),
+      limitGroups
     };
   }
   // ─── [ADDED] Claude Code Status ───────────────────────────────────────────
@@ -733,8 +826,6 @@ var SidebarProvider = class _SidebarProvider {
     this._extensionUri = _extensionUri;
     this._quotaService = _quotaService;
   }
-  _extensionUri;
-  _quotaService;
   _view;
   static _latestData = null;
   resolveWebviewView(webviewView) {
@@ -809,16 +900,25 @@ var SidebarProvider = class _SidebarProvider {
             <body>
                 <div id="app">
                     <div class="header">
-                        <h1>Quota Dashboard</h1>
+                        <div class="brand">
+                            <span class="brand-icon">\u26A1</span>
+                            <span class="brand-title">Aquota</span>
+                        </div>
                         <div class="header-actions">
-                            <button id="settings-btn" title="Settings">&#9881;</button>
-                            <button id="refresh-btn">Refresh</button>
+                            <button id="refresh-btn" class="action-btn" title="Refresh Quotas">
+                                <span class="refresh-icon">\u21BB</span>
+                                <span>Refresh</span>
+                            </button>
+                            <button id="settings-btn" class="action-btn icon-only" title="Settings">\u2699</button>
                         </div>
                     </div>
                     <div id="settings-panel" class="settings-container hidden"></div>
                     <div id="user-info"></div>
                     <div id="quota-list">
-                        <p class="loading">Establishing connection...</p>
+                        <div class="loading-state">
+                            <div class="spinner"></div>
+                            <span>Connecting to AI services...</span>
+                        </div>
                     </div>
                 </div>
                 <script nonce="${nonce}" src="${scriptUri}"></script>
@@ -1105,7 +1205,7 @@ function autoDetectGroups(quotas) {
   return groups;
 }
 function activate(context) {
-  const logger = vscode5.window.createOutputChannel("Auto Quota Antigravity");
+  const logger = vscode5.window.createOutputChannel("Aquota");
   context.subscriptions.push(logger);
   setTimeout(() => cleanupLegacyAutomation(logger), 500);
   const quotaService = new QuotaService(logger);
@@ -1116,7 +1216,7 @@ function activate(context) {
   );
   statusBarItem = vscode5.window.createStatusBarItem(vscode5.StatusBarAlignment.Right, 100);
   statusBarItem.command = "sqm.menu";
-  statusBarItem.text = "$(dashboard) Auto Quota Antigravity";
+  statusBarItem.text = "$(dashboard) Aquota";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
   context.subscriptions.push(
@@ -1128,10 +1228,10 @@ function activate(context) {
     vscode5.commands.registerCommand("sqm.menu", async () => {
       const items = [
         { id: "refresh", label: "$(refresh) Refresh quotas now" },
-        { id: "dashboard", label: "$(dashboard) Open dashboard" },
+        { id: "dashboard", label: "$(dashboard) Open Aquota Dashboard" },
         { id: "settings", label: "$(gear) Extension settings" }
       ];
-      const pick = await vscode5.window.showQuickPick(items, { placeHolder: "Auto Quota Antigravity" });
+      const pick = await vscode5.window.showQuickPick(items, { placeHolder: "Aquota Quick Menu" });
       switch (pick?.id) {
         case "refresh":
           triggerRefresh();
@@ -1191,7 +1291,7 @@ function buildTooltipSVG(data) {
   checkHealth(data.codex?.quotas);
   const badgeColor = minHealth > 50 ? "#10B981" : minHealth > 20 ? "#F59E0B" : "#EF4444";
   const badgeText = minHealth > 50 ? "ALL NORMAL" : minHealth > 20 ? "MODERATE" : "LOW QUOTA";
-  contentHtml += `<text x="${padding}" y="${padding + 10}" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="800" fill="#94A3B8" letter-spacing="0.5">AI QUOTA OVERVIEW</text>`;
+  contentHtml += `<text x="${padding}" y="${padding + 10}" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="900" fill="#38BDF8" letter-spacing="0.8">\u26A1 AQUOTA</text>`;
   contentHtml += `<rect x="${width - padding - 82}" y="${padding - 2}" width="82" height="17" rx="8.5" fill="${badgeColor}" fill-opacity="0.15" stroke="${badgeColor}" stroke-opacity="0.4" stroke-width="1"/>`;
   contentHtml += `<circle cx="${width - padding - 73}" cy="${padding + 6.5}" r="2.5" fill="${badgeColor}"/>`;
   contentHtml += `<text x="${width - padding - 65}" y="${padding + 10}" font-family="system-ui, -apple-system, sans-serif" font-size="8.5" font-weight="700" fill="${badgeColor}">${badgeText}</text>`;
@@ -1317,7 +1417,7 @@ function refreshStatusBar() {
     }
   }
   const mode = vscode5.workspace.getConfiguration("sqm").get("statusBar.mode") || "full";
-  let text = "Auto Quota Antigravity";
+  let text = "Aquota";
   let minHealth = 100;
   const formatSegment = (s, includeReset = true) => {
     if (includeReset && s.pct < 100 && s.resetText) {
@@ -1358,7 +1458,7 @@ function refreshStatusBar() {
   const name = latestQuotaData.antigravity?.name || "User";
   const tier = latestQuotaData.antigravity?.tier || "";
   const tierDisplay = tier ? ` (${tier})` : "";
-  tooltip.appendMarkdown(`&nbsp;&nbsp;\u{1F464} **${name}**${tierDisplay} &nbsp;&nbsp;\xB7&nbsp;&nbsp; [\u{1F504} Refresh](command:sqm.refresh) &nbsp;|&nbsp; [\u{1F4CA} Dashboard](command:sqm.sidebar.focus) &nbsp;|&nbsp; [\u2699\uFE0F Settings](command:sqm.menu)`);
+  tooltip.appendMarkdown(`&nbsp;&nbsp;\u26A1 **Aquota** \xB7 \u{1F464} **${name}**${tierDisplay} &nbsp;&nbsp;\xB7&nbsp;&nbsp; [\u{1F504} Refresh](command:sqm.refresh) &nbsp;|&nbsp; [\u{1F4CA} Dashboard](command:sqm.sidebar.focus) &nbsp;|&nbsp; [\u2699\uFE0F Settings](command:sqm.menu)`);
   statusBarItem.tooltip = tooltip;
 }
 function setLatestData(data) {

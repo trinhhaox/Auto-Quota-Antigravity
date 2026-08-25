@@ -104,16 +104,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <body>
                 <div id="app">
                     <div class="header">
-                        <h1>Quota Dashboard</h1>
+                        <div class="brand">
+                            <span class="brand-icon">⚡</span>
+                            <span class="brand-title">Aquota</span>
+                        </div>
                         <div class="header-actions">
-                            <button id="settings-btn" title="Settings">&#9881;</button>
-                            <button id="refresh-btn">Refresh</button>
+                            <button id="refresh-btn" class="action-btn" title="Refresh Quotas">
+                                <span class="refresh-icon">↻</span>
+                                <span>Refresh</span>
+                            </button>
+                            <button id="settings-btn" class="action-btn icon-only" title="Settings">⚙</button>
                         </div>
                     </div>
                     <div id="settings-panel" class="settings-container hidden"></div>
                     <div id="user-info"></div>
                     <div id="quota-list">
-                        <p class="loading">Establishing connection...</p>
+                        <div class="loading-state">
+                            <div class="spinner"></div>
+                            <span>Connecting to AI services...</span>
+                        </div>
                     </div>
                 </div>
                 <script nonce="${nonce}" src="${scriptUri}"></script>

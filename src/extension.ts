@@ -57,7 +57,7 @@ function autoDetectGroups(quotas: QuotaInfo[]): ModelGroup[] {
 
 
 export function activate(context: vscode.ExtensionContext) {
-    const logger = vscode.window.createOutputChannel('Auto Quota Antigravity');
+    const logger = vscode.window.createOutputChannel('Aquota');
     context.subscriptions.push(logger);
 
     // One-time cleanup: remove any auto-click bridge injected by older versions.
@@ -73,7 +73,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = "sqm.menu";
-    statusBarItem.text = "$(dashboard) Auto Quota Antigravity";
+    statusBarItem.text = "$(dashboard) Aquota";
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
 
@@ -89,10 +89,10 @@ export function activate(context: vscode.ExtensionContext) {
             type MenuItem = vscode.QuickPickItem & { id: string };
             const items: MenuItem[] = [
                 { id: 'refresh', label: '$(refresh) Refresh quotas now' },
-                { id: 'dashboard', label: '$(dashboard) Open dashboard' },
+                { id: 'dashboard', label: '$(dashboard) Open Aquota Dashboard' },
                 { id: 'settings', label: '$(gear) Extension settings' }
             ];
-            const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Auto Quota Antigravity' });
+            const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Aquota Quick Menu' });
             switch (pick?.id) {
                 case 'refresh': triggerRefresh(); break;
                 case 'dashboard': vscode.commands.executeCommand('sqm.sidebar.focus'); break;
@@ -188,8 +188,8 @@ function buildTooltipSVG(data: DashboardData): string {
     const badgeColor = minHealth > 50 ? '#10B981' : (minHealth > 20 ? '#F59E0B' : '#EF4444');
     const badgeText = minHealth > 50 ? 'ALL NORMAL' : (minHealth > 20 ? 'MODERATE' : 'LOW QUOTA');
 
-    // Header title and status pill
-    contentHtml += `<text x="${padding}" y="${padding + 10}" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="800" fill="#94A3B8" letter-spacing="0.5">AI QUOTA OVERVIEW</text>`;
+    // Header title (Aquota) and status pill
+    contentHtml += `<text x="${padding}" y="${padding + 10}" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="900" fill="#38BDF8" letter-spacing="0.8">⚡ AQUOTA</text>`;
     contentHtml += `<rect x="${width - padding - 82}" y="${padding - 2}" width="82" height="17" rx="8.5" fill="${badgeColor}" fill-opacity="0.15" stroke="${badgeColor}" stroke-opacity="0.4" stroke-width="1"/>`;
     contentHtml += `<circle cx="${width - padding - 73}" cy="${padding + 6.5}" r="2.5" fill="${badgeColor}"/>`;
     contentHtml += `<text x="${width - padding - 65}" y="${padding + 10}" font-family="system-ui, -apple-system, sans-serif" font-size="8.5" font-weight="700" fill="${badgeColor}">${badgeText}</text>`;
@@ -348,7 +348,7 @@ function refreshStatusBar() {
     }
 
     const mode = vscode.workspace.getConfiguration('sqm').get<string>('statusBar.mode') || 'full';
-    let text = 'Auto Quota Antigravity';
+    let text = 'Aquota';
     let minHealth = 100;
 
     const formatSegment = (s: StatusSegment, includeReset: boolean = true): string => {
@@ -397,7 +397,7 @@ function refreshStatusBar() {
     const name = latestQuotaData.antigravity?.name || "User";
     const tier = latestQuotaData.antigravity?.tier || "";
     const tierDisplay = tier ? ` (${tier})` : "";
-    tooltip.appendMarkdown(`&nbsp;&nbsp;👤 **${name}**${tierDisplay} &nbsp;&nbsp;·&nbsp;&nbsp; [🔄 Refresh](command:sqm.refresh) &nbsp;|&nbsp; [📊 Dashboard](command:sqm.sidebar.focus) &nbsp;|&nbsp; [⚙️ Settings](command:sqm.menu)`);
+    tooltip.appendMarkdown(`&nbsp;&nbsp;⚡ **Aquota** · 👤 **${name}**${tierDisplay} &nbsp;&nbsp;·&nbsp;&nbsp; [🔄 Refresh](command:sqm.refresh) &nbsp;|&nbsp; [📊 Dashboard](command:sqm.sidebar.focus) &nbsp;|&nbsp; [⚙️ Settings](command:sqm.menu)`);
     statusBarItem.tooltip = tooltip;
 }
 

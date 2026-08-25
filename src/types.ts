@@ -1,6 +1,18 @@
-// All quotas use one rule: `remaining` counts DOWN from 100% (full) to 0% (exhausted).
-// Rows whose displayValue is not a percentage (e.g. Codex "Active Model") are
-// informational only and excluded from color/notification/history logic.
+export interface LimitItem {
+    label: string;
+    remaining: number;
+    description: string;
+    resetTimeText?: string;
+    notApplicable?: boolean;
+}
+
+export interface LimitGroup {
+    id: string;
+    title: string;
+    infoTooltip?: string;
+    items: LimitItem[];
+}
+
 export interface QuotaInfo {
     label: string;
     remaining: number;
@@ -16,6 +28,7 @@ export interface UserStatus {
     email: string;
     tier: string;
     quotas: QuotaInfo[];
+    limitGroups?: LimitGroup[];
     isAuthenticated?: boolean;
     error?: string;
 }
@@ -24,6 +37,7 @@ export interface DashboardData {
     antigravity: UserStatus | null;
     claude: UserStatus | null;
     codex: UserStatus | null;
+    history?: HistoryEntry[];
 }
 
 export type WebviewMessage =
@@ -42,4 +56,5 @@ export interface HistoryEntry {
     t: number;
     v: Record<string, number>;
 }
+
 
