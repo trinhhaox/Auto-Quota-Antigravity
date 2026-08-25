@@ -733,6 +733,8 @@ var SidebarProvider = class _SidebarProvider {
     this._extensionUri = _extensionUri;
     this._quotaService = _quotaService;
   }
+  _extensionUri;
+  _quotaService;
   _view;
   static _latestData = null;
   resolveWebviewView(webviewView) {
@@ -999,6 +1001,30 @@ function getQuotaColor(pct) {
 function isPercentQuota(q) {
   return q.displayValue === void 0 || q.displayValue.endsWith("%");
 }
+function formatSessionResetText(resetTime, absResetTime) {
+  if (!resetTime || resetTime === "Ready" || resetTime === "Refreshing...") {
+    return resetTime || "Ready";
+  }
+  const absMatch = absResetTime ? absResetTime.match(/\(?(\d{1,2})h(\d{2})\)?/) : null;
+  const timeFormatted = absMatch ? `${absMatch[1].padStart(2, "0")}:${absMatch[2]}` : "";
+  const hMatch = resetTime.match(/(\d+)h/);
+  const mMatch = resetTime.match(/(\d+)m/);
+  const totalHours = hMatch ? parseInt(hMatch[1]) : 0;
+  const totalMins = mMatch ? parseInt(mMatch[1]) : 0;
+  if (totalHours < 24) {
+    const now = /* @__PURE__ */ new Date();
+    const resetDate = new Date(now.getTime() + (totalHours * 60 + totalMins) * 60 * 1e3);
+    const isToday = resetDate.getDate() === now.getDate();
+    if (timeFormatted) {
+      return isToday ? `Resets today at ${timeFormatted}` : `Resets tomorrow at ${timeFormatted}`;
+    }
+    return `Resets in ${formatTime(resetTime)}`;
+  }
+  const days = Math.floor(totalHours / 24);
+  const remHours = totalHours % 24;
+  const inText = `${days}d ${remHours}h`;
+  return absResetTime ? `Resets in ${inText} ${absResetTime}` : `Resets in ${inText}`;
+}
 
 // src/quota-history.ts
 var STORE_KEY = "quota_history_v2";
@@ -1146,7 +1172,6 @@ function formatCleanModelName(label) {
   return label.replace(/\s*\(Thinking\)/i, "").replace(/\s*\(Medium\)/i, "").replace(/\s*\(High\)/i, "").replace(/\s*\(Low\)/i, "").trim();
 }
 function buildTooltipSVG(data) {
-  const rowHeight = 30;
   const groupHeaderHeight = 24;
   const padding = 16;
   const width = 440;
@@ -1178,37 +1203,35 @@ function buildTooltipSVG(data) {
       const pct = Math.round(q.remaining);
       const isPercent = isPercentQuota(q);
       const color = isPercent ? getQuotaColor(pct) : { hex: "#6B7280", dot: "" };
-      const time = formatTime(q.resetTime);
       const cleanName = formatCleanModelName(q.label);
-      contentHtml += `<rect x="${padding}" y="${currentY}" width="${width - padding * 2}" height="${rowHeight - 4}" rx="6" fill="#FFFFFF" fill-opacity="0.035"/>`;
-      contentHtml += `<circle cx="${padding + 10}" cy="${currentY + 13}" r="3.5" fill="${color.hex}"/>`;
-      contentHtml += `<text x="${padding + 22}" y="${currentY + 17}" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#E2E8F0">${escapeXml(cleanName)}</text>`;
-      const barX = 180;
-      const barWidth = 60;
+      const sessionReset = formatSessionResetText(q.resetTime, q.absResetTime);
       if (!isPercent) {
-      } else if (q.style === "fluid") {
-        const fillWidth = Math.max(2, pct / 100 * barWidth);
-        contentHtml += `<rect x="${barX}" y="${currentY + 11}" width="${barWidth}" height="4" rx="2" fill="#FFFFFF" fill-opacity="0.08"/>`;
-        contentHtml += `<rect x="${barX}" y="${currentY + 11}" width="${fillWidth}" height="4" rx="2" fill="${color.hex}" fill-opacity="0.95"/>`;
+        const infoHeight = 32;
+        contentHtml += `<rect x="${padding}" y="${currentY}" width="${width - padding * 2}" height="${infoHeight - 4}" rx="6" fill="#FFFFFF" fill-opacity="0.035"/>`;
+        contentHtml += `<text x="${padding + 12}" y="${currentY + 18}" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#E2E8F0">${escapeXml(cleanName)}</text>`;
+        contentHtml += `<text x="${width - padding - 12}" y="${currentY + 18}" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" font-weight="bold" fill="#69F0AE">${escapeXml(q.displayValue || "")}</text>`;
+        currentY += infoHeight;
       } else {
-        const segWidth = 10;
-        const segGap = 2.5;
-        const filled = Math.min(5, Math.ceil(pct / 20));
-        for (let i = 0; i < 5; i++) {
-          const opacity = i < filled ? 0.95 : 0.12;
-          contentHtml += `<rect x="${barX + i * (segWidth + segGap)}" y="${currentY + 11}" width="${segWidth}" height="4" rx="1.5" fill="${color.hex}" fill-opacity="${opacity}"/>`;
-        }
+        const cardHeight = 54;
+        const cardWidth = width - padding * 2;
+        const trackWidth = cardWidth - 24;
+        const fillWidth = Math.max(3, pct / 100 * trackWidth);
+        const subLabel = title.includes("CLAUDE") ? cleanName.includes("Session") ? "5-hour window" : "7-day window" : "Shared Pool";
+        contentHtml += `<rect x="${padding}" y="${currentY}" width="${cardWidth}" height="${cardHeight - 6}" rx="8" fill="#FFFFFF" fill-opacity="0.03" stroke="#FFFFFF" stroke-opacity="0.05" stroke-width="1"/>`;
+        contentHtml += `<circle cx="${padding + 12}" cy="${currentY + 13}" r="3" fill="${color.hex}"/>`;
+        contentHtml += `<text x="${padding + 20}" y="${currentY + 16}" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="700" fill="#F1F5F9">${escapeXml(cleanName)}</text>`;
+        contentHtml += `<text x="${width - padding - 12}" y="${currentY + 16}" text-anchor="end" font-family="system-ui, -apple-system, sans-serif" font-size="9" font-weight="500" fill="#64748B">${escapeXml(subLabel)}</text>`;
+        const barY = currentY + 23;
+        contentHtml += `<rect x="${padding + 12}" y="${barY}" width="${trackWidth}" height="5" rx="2.5" fill="#FFFFFF" fill-opacity="0.08"/>`;
+        contentHtml += `<rect x="${padding + 12}" y="${barY}" width="${fillWidth}" height="5" rx="2.5" fill="${color.hex}" fill-opacity="0.95"/>`;
+        const textY = currentY + 41;
+        contentHtml += `<text x="${padding + 12}" y="${textY}" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="800" fill="${color.hex}">${pct}% <tspan font-weight="500" font-size="9.5" fill="#94A3B8">left</tspan></text>`;
+        contentHtml += `<text x="${width - padding - 12}" y="${textY}" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9.5" font-weight="500" fill="#94A3B8">${escapeXml(sessionReset)}</text>`;
+        currentY += cardHeight;
       }
-      const pctX = 252;
-      const centerText = q.displayValue !== void 0 ? q.displayValue : `${pct}%`;
-      contentHtml += `<text x="${pctX}" y="${currentY + 17}" text-anchor="start" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" font-weight="bold" fill="#F8FAFC">${escapeXml(centerText)}</text>`;
-      const fullTime = isPercent ? q.absResetTime ? `${time} ${q.absResetTime}`.trim() : time === "Ready" ? "Ready" : time : "";
-      const timeX = 295;
-      contentHtml += `<text x="${timeX}" y="${currentY + 17}" text-anchor="start" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9.5" font-weight="500" fill="#94A3B8">${escapeXml(fullTime)}</text>`;
-      currentY += rowHeight;
     });
-    contentHtml += `<line x1="${padding}" y1="${currentY - 4}" x2="${width - padding}" y2="${currentY - 4}" stroke="#252C3F" stroke-width="1" stroke-opacity="0.6"/>`;
-    currentY += 4;
+    contentHtml += `<line x1="${padding}" y1="${currentY - 2}" x2="${width - padding}" y2="${currentY - 2}" stroke="#252C3F" stroke-width="1" stroke-opacity="0.6"/>`;
+    currentY += 6;
   };
   if (data.antigravity?.quotas) {
     const groups = autoDetectGroups(data.antigravity.quotas);
@@ -1408,4 +1431,3 @@ function deactivate() {
   deactivate,
   setLatestData
 });
-//# sourceMappingURL=extension.js.map

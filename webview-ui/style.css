@@ -156,56 +156,47 @@ button#settings-btn:hover {
     gap: 6px;
 }
 
-.quota-row {
+/* Session Cards */
+.session-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px 11px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+    border: 1px solid color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.session-card:hover {
+    background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+    border-color: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.session-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 9px;
-    padding: 7px 9px;
-    border-radius: 7px;
-    background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
-}
-
-.quota-main {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-    flex: 1;
-}
-
-.quota-top {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
     min-width: 0;
 }
 
-.quota-label {
-    font-size: 11px;
-    font-weight: 600;
+.session-label {
+    font-size: 11.5px;
+    font-weight: 700;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    color: var(--vscode-foreground);
 }
 
-.quota-time {
-    font-size: 9px;
+.session-sub {
+    font-size: 9.5px;
+    font-weight: 500;
     color: var(--ui-subtle);
     white-space: nowrap;
-    font-variant-numeric: tabular-nums;
 }
 
-.quota-value {
-    font-size: 13px;
-    font-weight: 700;
-    min-width: 40px;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-}
-
-.quota-bar {
+.session-bar-track {
     position: relative;
     height: 6px;
     background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
@@ -213,13 +204,33 @@ button#settings-btn:hover {
     overflow: hidden;
 }
 
-.quota-bar-fill {
+.session-bar-fill {
     position: absolute;
     left: 0;
     top: 0;
     bottom: 0;
     border-radius: 999px;
     transition: width 0.4s ease;
+}
+
+.session-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 0;
+}
+
+.session-left {
+    font-size: 10px;
+    color: var(--ui-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.session-reset {
+    font-size: 9.5px;
+    color: var(--ui-muted);
+    font-variant-numeric: tabular-nums;
+    font-family: var(--vscode-editor-font-family, monospace);
 }
 
 .quota-spark {
@@ -230,7 +241,12 @@ button#settings-btn:hover {
 
 /* Informational rows (e.g. Codex active model) */
 .model-row {
-    padding: 5px 9px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 11px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
 }
 
 .model-value {

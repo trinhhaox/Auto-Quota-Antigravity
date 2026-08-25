@@ -34,3 +34,35 @@ export function isPercentQuota(q: { displayValue?: string }): boolean {
     return q.displayValue === undefined || q.displayValue.endsWith('%');
 }
 
+// Format reset string specifically for session bar footer (e.g. "Resets today at 11:19", "Resets in 1d 17h (23h39)")
+export function formatSessionResetText(resetTime?: string, absResetTime?: string): string {
+    if (!resetTime || resetTime === 'Ready' || resetTime === 'Refreshing...') {
+        return resetTime || 'Ready';
+    }
+
+    const absMatch = absResetTime ? absResetTime.match(/\(?(\d{1,2})h(\d{2})\)?/) : null;
+    const timeFormatted = absMatch ? `${absMatch[1].padStart(2, '0')}:${absMatch[2]}` : '';
+
+    const hMatch = resetTime.match(/(\d+)h/);
+    const mMatch = resetTime.match(/(\d+)m/);
+    const totalHours = hMatch ? parseInt(hMatch[1]) : 0;
+    const totalMins = mMatch ? parseInt(mMatch[1]) : 0;
+
+    if (totalHours < 24) {
+        // Within same day or tomorrow morning
+        const now = new Date();
+        const resetDate = new Date(now.getTime() + (totalHours * 60 + totalMins) * 60 * 1000);
+        const isToday = resetDate.getDate() === now.getDate();
+        if (timeFormatted) {
+            return isToday ? `Resets today at ${timeFormatted}` : `Resets tomorrow at ${timeFormatted}`;
+        }
+        return `Resets in ${formatTime(resetTime)}`;
+    }
+
+    const days = Math.floor(totalHours / 24);
+    const remHours = totalHours % 24;
+    const inText = `${days}d ${remHours}h`;
+    return absResetTime ? `Resets in ${inText} ${absResetTime}` : `Resets in ${inText}`;
+}
+
+

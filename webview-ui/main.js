@@ -143,6 +143,35 @@ function formatTime(t) {
     return `${h}h ${m}m`;
 }
 
+function formatSessionResetText(resetTime, absResetTime) {
+    if (!resetTime || resetTime === 'Ready' || resetTime === 'Refreshing...') {
+        return resetTime || 'Ready';
+    }
+
+    const absMatch = absResetTime ? absResetTime.match(/\(?(\d{1,2})h(\d{2})\)?/) : null;
+    const timeFormatted = absMatch ? `${absMatch[1].padStart(2, '0')}:${absMatch[2]}` : '';
+
+    const hMatch = resetTime.match(/(\d+)h/);
+    const mMatch = resetTime.match(/(\d+)m/);
+    const totalHours = hMatch ? parseInt(hMatch[1]) : 0;
+    const totalMins = mMatch ? parseInt(mMatch[1]) : 0;
+
+    if (totalHours < 24) {
+        const now = new Date();
+        const resetDate = new Date(now.getTime() + (totalHours * 60 + totalMins) * 60 * 1000);
+        const isToday = resetDate.getDate() === now.getDate();
+        if (timeFormatted) {
+            return isToday ? `Resets today at ${timeFormatted}` : `Resets tomorrow at ${timeFormatted}`;
+        }
+        return `Resets in ${formatTime(resetTime)}`;
+    }
+
+    const days = Math.floor(totalHours / 24);
+    const remHours = totalHours % 24;
+    const inText = `${days}d ${remHours}h`;
+    return absResetTime ? `Resets in ${inText} ${absResetTime}` : `Resets in ${inText}`;
+}
+
 // Extract the last N history points for one "Service-Label" key
 function historySeries(history, key) {
     if (!Array.isArray(history)) return [];
@@ -185,23 +214,24 @@ function createGauge(quota, series) {
     }
 
     const color = healthColor(pct);
-    const centerText = quota.displayValue !== undefined ? quota.displayValue : `${pct}%`;
-    const time = `${formatTime(quota.resetTime)} ${quota.absResetTime || ''}`.trim();
+    const timeFormatted = formatSessionResetText(quota.resetTime, quota.absResetTime);
     const barWidth = Math.max(0, Math.min(100, pct));
+    const subLabel = label.includes('Session') ? '5-hour window' : (label.includes('Weekly') || label.includes('7day') ? '7-day window' : 'Shared Pool');
 
     return `
-        <div class="quota-row">
-            <div class="quota-main">
-                <div class="quota-top">
-                    <span class="quota-label">${escapeHtml(label)}</span>
-                    <span class="quota-time">${escapeHtml(time)}</span>
-                </div>
-                <div class="quota-bar">
-                    <div class="quota-bar-fill" style="width:${barWidth}%;background:linear-gradient(90deg,${color}99,${color});box-shadow:0 0 6px ${color}66;"></div>
-                </div>
-                ${sparklineSvg(series, color)}
+        <div class="session-card">
+            <div class="session-header">
+                <span class="session-label">${escapeHtml(label)}</span>
+                <span class="session-sub">${escapeHtml(subLabel)}</span>
             </div>
-            <div class="quota-value" style="color:${color};">${escapeHtml(centerText)}</div>
+            <div class="session-bar-track">
+                <div class="session-bar-fill" style="width:${barWidth}%;background:linear-gradient(90deg,${color}CC,${color});box-shadow:0 0 8px ${color}55;"></div>
+            </div>
+            <div class="session-footer">
+                <span class="session-left"><strong style="color:${color};font-size:11.5px;">${pct}%</strong> left</span>
+                <span class="session-reset">${escapeHtml(timeFormatted)}</span>
+            </div>
+            ${sparklineSvg(series, color)}
         </div>
     `;
 }
