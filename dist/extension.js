@@ -1531,3 +1531,4 @@ function deactivate() {
   deactivate,
   setLatestData
 });
+//# sourceMappingURL=extension.js.map

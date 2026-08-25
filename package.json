@@ -2,7 +2,7 @@
   "name": "auto-quota-antigravity",
   "displayName": "Aquota",
   "description": "Real-time AI Quota Monitor for Antigravity IDE, Claude Code, and OpenAI Codex.",
-  "version": "1.9.4",
+  "version": "2.0.0",
   "publisher": "BiViPi",
   "author": {
     "name": "BiViPi",
