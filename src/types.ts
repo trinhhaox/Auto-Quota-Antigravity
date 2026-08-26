@@ -4,6 +4,7 @@ export interface LimitItem {
     description: string;
     resetTimeText?: string;
     notApplicable?: boolean;
+    displayValue?: string;
 }
 
 export interface LimitGroup {

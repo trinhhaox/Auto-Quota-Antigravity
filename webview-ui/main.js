@@ -93,22 +93,29 @@ function renderDashboard(data) {
 
     let html = '';
 
-    // 1. Structured Limit Groups Overview (Gemini Models & Claude/GPT Models)
+    // 1. Antigravity Quota Groups (Gemini Models & Claude/GPT Models with Weekly + 5H Session)
     if (ag && ag.limitGroups && ag.limitGroups.length > 0) {
         html += ag.limitGroups.map(group => renderLimitGroup(group)).join('');
+    } else if (ag) {
+        html += renderServiceGroup('Antigravity', ag);
     }
 
-    // 2. Detailed Model Quotas & 5-Hour Session Bars
-    if (ag && ag.quotas && ag.quotas.length > 0) {
-        html += renderServiceGroup('Antigravity', ag, data.history, 'MODEL BREAKDOWN (5H SESSION)');
+    // 2. External Services (Claude Code CLI & Codex if logged in)
+    if (data.claude && data.claude.isAuthenticated) {
+        const subtitle = `${data.claude.tier || 'User'} · ${data.claude.email || ''}`.trim();
+        if (data.claude.limitGroups && data.claude.limitGroups.length > 0) {
+            html += data.claude.limitGroups.map(group => renderLimitGroup(group, subtitle, '🟧')).join('');
+        } else {
+            html += renderServiceGroup('Claude', data.claude);
+        }
     }
-
-    // 3. External Services (Claude Code & Codex if logged in)
-    if (data.claude) {
-        html += renderServiceGroup('Claude', data.claude, data.history);
-    }
-    if (data.codex) {
-        html += renderServiceGroup('Codex', data.codex, data.history);
+    if (data.codex && data.codex.isAuthenticated) {
+        const subtitle = `${data.codex.tier || 'Free'} · ${data.codex.email || ''}`.trim();
+        if (data.codex.limitGroups && data.codex.limitGroups.length > 0) {
+            html += data.codex.limitGroups.map(group => renderLimitGroup(group, subtitle, '🟩')).join('');
+        } else {
+            html += renderServiceGroup('Codex', data.codex);
+        }
     }
 
     if (!html) {
@@ -149,20 +156,26 @@ function createDonutSvg(pct) {
     `;
 }
 
-function renderLimitGroup(group) {
+function renderLimitGroup(group, subtitle, icon) {
     let rowsHtml = '';
     group.items.forEach((item, index) => {
-        const isNotApplicable = item.notApplicable || (item.remaining === 0 && item.label.includes('Five Hour'));
+        const isNotApplicable = item.notApplicable || (item.remaining === 0 && item.label.includes('Five Hour') && item.notApplicable);
         
         let statRightHtml = '';
-        if (!isNotApplicable) {
+        if (item.displayValue !== undefined && item.displayValue !== '') {
+            statRightHtml = `
+                <div class="limit-stat">
+                    <span class="limit-badge-value">${escapeHtml(item.displayValue)}</span>
+                </div>
+            `;
+        } else if (!isNotApplicable) {
             statRightHtml = `
                 <div class="limit-stat">
                     <span class="limit-pct">${item.remaining}%</span>
                     ${createDonutSvg(item.remaining)}
                 </div>
             `;
-        } else if (item.label.includes('Weekly')) {
+        } else {
             statRightHtml = `
                 <div class="limit-stat">
                     <span class="limit-pct">0%</span>
@@ -185,12 +198,19 @@ function renderLimitGroup(group) {
         `;
     });
 
+    const iconHtml = icon ? `<span class="group-icon">${icon}</span>` : '';
+    const subtitleHtml = subtitle ? `<div class="limit-group-sub">${escapeHtml(subtitle)}</div>` : '';
+
     return `
         <div class="limit-group">
             <div class="limit-group-header">
-                <span class="limit-group-title">${escapeHtml(group.title)}</span>
+                <div class="limit-group-title-wrap">
+                    ${iconHtml}
+                    <span class="limit-group-title">${escapeHtml(group.title)}</span>
+                </div>
                 <span class="info-icon" title="${escapeHtml(group.infoTooltip || '')}">ⓘ</span>
             </div>
+            ${subtitleHtml}
             <div class="limit-card">
                 ${rowsHtml}
             </div>
@@ -213,47 +233,59 @@ function isPercentQuota(q) {
     return q.displayValue === undefined || String(q.displayValue).endsWith('%');
 }
 
-function renderServiceGroup(serviceKey, status, history, customTitle) {
+function renderServiceGroup(serviceKey, status) {
     if (!status) return '';
 
     const meta = SERVICE_META[serviceKey] || { accent: '#64748B', icon: '🔹', title: serviceKey.toUpperCase() };
-    const displayTitle = customTitle || meta.title;
-    const isAuthenticated = status.isAuthenticated !== false;
-    const infoLine = `${escapeHtml(status.tier)} · ${escapeHtml(status.email)}`;
+    const subtitle = `${status.tier || 'Free'} · ${status.email || ''}`.trim();
 
-    // Group status dot = worst remaining % across percentage rows
-    const pctRows = (status.quotas || []).filter(isPercentQuota);
-    let dotHtml = '';
-    if (isAuthenticated && !status.error && pctRows.length > 0) {
-        const worst = Math.min(...pctRows.map(q => q.remaining));
-        const dotColor = healthColor(worst);
-        dotHtml = `<span class="group-dot ${worst <= 20 ? 'pulse' : ''}" style="background:${dotColor};box-shadow:0 0 6px ${dotColor}88;"></span>`;
-    }
-
-    let gaugesHtml = '';
     if (status.error) {
-        gaugesHtml = `<p class="error-msg">${escapeHtml(status.error)}</p>`;
-    } else if (isAuthenticated && status.quotas && status.quotas.length > 0) {
-        gaugesHtml = `<div class="gauge-grid">${status.quotas.map(q =>
-            createGauge(q, historySeries(history, `${serviceKey}-${q.label}`))
-        ).join('')}</div>`;
-    } else if (!isAuthenticated) {
-        gaugesHtml = `<p class="error-msg">${escapeHtml(status.email || 'Not authenticated')}</p>`;
+        return `
+            <div class="limit-group">
+                <div class="limit-group-header">
+                    <div class="limit-group-title-wrap">
+                        <span class="group-icon">${meta.icon}</span>
+                        <span class="limit-group-title">${escapeHtml(meta.title)}</span>
+                    </div>
+                </div>
+                <div class="limit-card">
+                    <div class="limit-row">
+                        <p class="error-msg">${escapeHtml(status.error)}</p>
+                    </div>
+                </div>
+            </div>
+        `;
     }
 
-    return `
-        <div class="service-group" style="--accent:${meta.accent};margin-top:6px;">
-            <div class="group-header">
-                <div class="group-title-wrap">
-                    <span class="group-icon">${meta.icon}</span>
-                    <span class="group-title">${escapeHtml(displayTitle)}</span>
-                </div>
-                ${dotHtml}
-            </div>
-            <div class="service-info">${infoLine}</div>
-            ${gaugesHtml}
-        </div>
-    `;
+    const items = (status.quotas || []).map(q => {
+        const isPercent = isPercentQuota(q);
+        if (!isPercent) {
+            return {
+                label: q.label,
+                remaining: 0,
+                displayValue: q.displayValue || '',
+                description: 'Current model selected for session.'
+            };
+        }
+        const timeFormatted = formatSessionResetText(q.resetTime, q.absResetTime);
+        const isSession = q.label.includes('Session') || q.label.includes('5hr');
+        const defaultName = isSession ? 'Five Hour Limit Remaining' : (q.label.includes('Weekly') || q.label.includes('7day') ? 'Weekly Limit Remaining' : q.label);
+        return {
+            label: defaultName,
+            remaining: Math.round(q.remaining),
+            description: q.remaining === 100
+                ? `You have full limit available, ${timeFormatted}.`
+                : (q.remaining === 0 ? `You have hit your limit, ${timeFormatted}.` : `You have used some of your limit, ${timeFormatted}.`),
+            resetTimeText: q.resetTime
+        };
+    });
+
+    return renderLimitGroup({
+        id: serviceKey.toLowerCase(),
+        title: meta.title,
+        infoTooltip: `${meta.title} usage limits`,
+        items
+    }, subtitle, meta.icon);
 }
 
 function formatTime(t) {

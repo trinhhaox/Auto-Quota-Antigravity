@@ -110,7 +110,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (e.affectsConfiguration("sqm.refreshInterval")) {
             startAutoRefresh();
         }
-        if (e.affectsConfiguration("sqm.statusBar.mode")) {
+        if (e.affectsConfiguration("sqm.statusBar.mode") || e.affectsConfiguration("sqm.statusBar.usagePeriod")) {
             refreshStatusBar();
         }
     }));
@@ -137,6 +137,8 @@ function escapeXml(s: string): string {
 
 function formatCleanModelName(label: string): string {
     return label
+        .replace(/^Gemini\s+/i, '')
+        .replace(/^Claude\/GPT\s+/i, '')
         .replace(/\s*\(Thinking\)/i, '')
         .replace(/\s*\(Medium\)/i, '')
         .replace(/\s*\(High\)/i, '')
@@ -220,7 +222,9 @@ function buildTooltipSVG(data: DashboardData): string {
                 const cardWidth = width - padding * 2;
                 const trackWidth = cardWidth - 24;
                 const fillWidth = Math.max(3, (pct / 100) * trackWidth);
-                const subLabel = title.includes('CLAUDE') ? (cleanName.includes('Session') ? '5-hour window' : '7-day window') : 'Shared Pool';
+                const isSession = cleanName.includes('Session') || cleanName.includes('5hr') || cleanName.includes('5-Hour');
+                const isWeekly = cleanName.includes('Weekly') || cleanName.includes('7day') || cleanName.includes('7-Day');
+                const subLabel = isSession ? '5-hour window' : (isWeekly ? '7-day window' : (title.includes('CLAUDE CODE') ? '5-hour window' : 'Shared Pool'));
 
                 // Card background
                 contentHtml += `<rect x="${padding}" y="${currentY}" width="${cardWidth}" height="${cardHeight - 6}" rx="8" fill="#FFFFFF" fill-opacity="0.03" stroke="#FFFFFF" stroke-opacity="0.05" stroke-width="1"/>`;
@@ -278,44 +282,58 @@ function refreshStatusBar() {
     if (!latestQuotaData) return;
 
     const segments: StatusSegment[] = [];
+    const period = vscode.workspace.getConfiguration('sqm').get<string>('statusBar.usagePeriod') || '5-hour';
 
-    // 1. Antigravity IDE - Gemini Models (consolidated to single representative segment)
+    const selectQuota = (quotasList: QuotaInfo[]): QuotaInfo | undefined => {
+        if (!quotasList || quotasList.length === 0) return undefined;
+        if (period === '5-hour') {
+            const fiveHr = quotasList.find(q => q.label.includes('5hr') || q.label.includes('5-Hour') || q.label.includes('Session'));
+            if (fiveHr) return fiveHr;
+        } else if (period === '7-day') {
+            const sevenDay = quotasList.find(q => q.label.includes('7day') || q.label.includes('7-Day') || q.label.includes('Weekly'));
+            if (sevenDay) return sevenDay;
+        }
+        return quotasList.reduce((a, b) => (b.remaining < a.remaining ? b : a));
+    };
+
+    // 1. Antigravity IDE - Gemini Models
     if (latestQuotaData.antigravity?.quotas) {
         const geminiQuotas = latestQuotaData.antigravity.quotas.filter(q => q.label.startsWith('Gemini') && isPercentQuota(q));
-        if (geminiQuotas.length > 0) {
-            const minGemini = geminiQuotas.reduce((a, b) => (b.remaining < a.remaining ? b : a));
-            const pct = Math.round(minGemini.remaining);
-            const color = getQuotaColor(minGemini.remaining);
-            const resetShort = formatShortReset(minGemini.resetTime);
+        const targetGemini = selectQuota(geminiQuotas);
+        if (targetGemini) {
+            const pct = Math.round(targetGemini.remaining);
+            const color = getQuotaColor(targetGemini.remaining);
+            const resetShort = formatShortReset(targetGemini.resetTime);
             segments.push({
                 label: 'Gemini',
                 pct,
                 dot: color.dot,
                 resetText: resetShort,
-                health: minGemini.remaining
+                health: targetGemini.remaining
             });
         }
 
-        // Antigravity IDE - Claude / GPT Models (consolidated to representative segment)
+        // Antigravity IDE - Claude / GPT Models
         const claudeGptQuotas = latestQuotaData.antigravity.quotas.filter(q => (q.label.startsWith('Claude') || q.label.startsWith('GPT')) && isPercentQuota(q));
-        if (claudeGptQuotas.length > 0) {
-            const minClaudeGpt = claudeGptQuotas.reduce((a, b) => (b.remaining < a.remaining ? b : a));
-            const pct = Math.round(minClaudeGpt.remaining);
-            const color = getQuotaColor(minClaudeGpt.remaining);
-            const resetShort = formatShortReset(minClaudeGpt.resetTime);
+        const targetClaudeGpt = selectQuota(claudeGptQuotas);
+        if (targetClaudeGpt) {
+            const pct = Math.round(targetClaudeGpt.remaining);
+            const color = getQuotaColor(targetClaudeGpt.remaining);
+            const resetShort = formatShortReset(targetClaudeGpt.resetTime);
             segments.push({
                 label: 'Claude',
                 pct,
                 dot: color.dot,
                 resetText: resetShort,
-                health: minClaudeGpt.remaining
+                health: targetClaudeGpt.remaining
             });
         }
     }
 
     // 2. Claude Code CLI (if authenticated)
     if (latestQuotaData.claude?.isAuthenticated && latestQuotaData.claude.quotas?.length) {
-        const q = latestQuotaData.claude.quotas.find(isPercentQuota);
+        const claudeCliQuotas = latestQuotaData.claude.quotas.filter(isPercentQuota);
+        const q = selectQuota(claudeCliQuotas);
         if (q) {
             const pct = Math.round(q.remaining);
             const color = getQuotaColor(q.remaining);
@@ -332,7 +350,8 @@ function refreshStatusBar() {
 
     // 3. OpenAI Codex (if authenticated and has percentage)
     if (latestQuotaData.codex?.isAuthenticated && latestQuotaData.codex.quotas?.length) {
-        const q = latestQuotaData.codex.quotas.find(isPercentQuota);
+        const codexQuotas = latestQuotaData.codex.quotas.filter(isPercentQuota);
+        const q = selectQuota(codexQuotas);
         if (q) {
             const pct = Math.round(q.remaining);
             const color = getQuotaColor(q.remaining);

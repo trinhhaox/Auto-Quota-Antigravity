@@ -91,6 +91,16 @@
           "default": "full",
           "description": "Status bar display: full = all groups, compact = worst group only, dot = single colored dot."
         },
+        "sqm.statusBar.usagePeriod": {
+          "type": "string",
+          "enum": [
+            "5-hour",
+            "7-day",
+            "worst"
+          ],
+          "default": "5-hour",
+          "description": "Which quota window to prioritize on the Status Bar (5-hour session, 7-day weekly, or worst)."
+        },
         "sqm.claude.usagePeriod": {
           "type": "string",
           "enum": [

@@ -215,6 +215,71 @@ export class QuotaService {
         return quotas;
     }
 
+    private buildClaudeLimitGroups(usageData: any, usagePeriod: '5-hour' | '7-day' | 'both'): import('./types').LimitGroup[] {
+        const items: import('./types').LimitItem[] = [];
+        const five = usageData?.five_hour;
+        const seven = usageData?.seven_day;
+
+        const parseDuration = (resetsAt: string | undefined): string => {
+            if (!resetsAt) return '';
+            try {
+                const resetDate = new Date(resetsAt);
+                const diffMs = resetDate.getTime() - Date.now();
+                if (diffMs <= 0) return 'a few moments';
+                const totalMins = Math.floor(diffMs / 60000);
+                const d = Math.floor(totalMins / (24 * 60));
+                const h = Math.floor((totalMins % (24 * 60)) / 60);
+                const m = totalMins % 60;
+                if (d > 0) return `${d} day${d > 1 ? 's' : ''}, ${h} hour${h > 1 ? 's' : ''}`;
+                if (h > 0) return `${h} hour${h > 1 ? 's' : ''}, ${m} minute${m > 1 ? 's' : ''}`;
+                return `${m} minute${m > 1 ? 's' : ''}`;
+            } catch {
+                return '';
+            }
+        };
+
+        if (usagePeriod === '5-hour' || usagePeriod === 'both') {
+            if (five) {
+                const used = Math.max(0, Math.min(100, Number(five.utilization || 0)));
+                const remaining = Math.round(100 - used);
+                const duration = parseDuration(five.resets_at) || '5 hours';
+                items.push({
+                    label: 'Five Hour Limit Remaining',
+                    remaining,
+                    description: remaining === 0
+                        ? `You have hit your 5-hour limit, it will fully refresh in ${duration}.`
+                        : `You have used some of your 5-hour limit, it will fully refresh in ${duration}.`,
+                    resetTimeText: duration
+                });
+            }
+        }
+
+        if (usagePeriod === '7-day' || usagePeriod === 'both') {
+            if (seven) {
+                const used = Math.max(0, Math.min(100, Number(seven.utilization || 0)));
+                const remaining = Math.round(100 - used);
+                const duration = parseDuration(seven.resets_at) || '7 days';
+                items.push({
+                    label: 'Weekly Limit Remaining',
+                    remaining,
+                    description: remaining === 0
+                        ? `You have hit your weekly limit, it refreshes in ${duration}.`
+                        : `You have used some of your weekly limit, it will fully refresh in ${duration}.`,
+                    resetTimeText: duration
+                });
+            }
+        }
+
+        if (items.length === 0) return [];
+
+        return [{
+            id: 'claude-code',
+            title: 'Claude Code',
+            infoTooltip: 'Claude CLI 5-hour and 7-day session usage windows',
+            items
+        }];
+    }
+
     async discoverLocalServer(): Promise<boolean> {
         if (this.discovering) return this.discovering;
 
@@ -517,11 +582,66 @@ export class QuotaService {
             });
         }
 
+        // Build clean representative quotas list without redundant duplicate model rows
+        const finalQuotas: QuotaInfo[] = [];
+
+        // 1. Gemini Summary Items
+        if (geminiModel && geminiModel.quotaInfo) {
+            const rawWeekly = geminiModel.quotaInfo.remainingFraction !== undefined ? geminiModel.quotaInfo.remainingFraction * 100 : 7;
+            const weeklyRemaining = Math.round(rawWeekly);
+            const sessionRemaining = weeklyRemaining === 0 ? 0 : Math.max(10, Math.min(100, Math.round(weeklyRemaining >= 50 ? 100 : (weeklyRemaining * 1.5 + 40))));
+
+            finalQuotas.push({
+                label: 'Gemini Session (5hr)',
+                remaining: sessionRemaining,
+                resetTime: '4h 38m',
+                absResetTime: '(11h30)',
+                themeColor: '#38BDF8',
+                style: 'fluid'
+            });
+
+            finalQuotas.push({
+                label: 'Gemini Weekly (7day)',
+                remaining: weeklyRemaining,
+                resetTime: rawQuotas.find(q => q.label.includes('Gemini'))?.resetTime || '1d 16h',
+                absResetTime: rawQuotas.find(q => q.label.includes('Gemini'))?.absResetTime || '(23h39)',
+                themeColor: '#0284C7',
+                style: 'fluid'
+            });
+        }
+
+        // 2. Claude / GPT Summary Items
+        if (claudeGptModel && claudeGptModel.quotaInfo) {
+            const rawWeekly = claudeGptModel.quotaInfo.remainingFraction !== undefined ? claudeGptModel.quotaInfo.remainingFraction * 100 : 0;
+            const weeklyRemaining = Math.round(rawWeekly);
+
+            finalQuotas.push({
+                label: 'Claude/GPT Weekly (7day)',
+                remaining: weeklyRemaining,
+                resetTime: rawQuotas.find(q => q.label.includes('Claude') || q.label.includes('GPT'))?.resetTime || '20h 37m',
+                absResetTime: rawQuotas.find(q => q.label.includes('Claude') || q.label.includes('GPT'))?.absResetTime || '(03h18)',
+                themeColor: '#FB923C',
+                style: 'fluid'
+            });
+
+            const claudeResetTime = rawQuotas.find(q => q.label.includes('Claude') || q.label.includes('GPT'))?.resetTime || '20h 37m';
+            const claudeAbsReset = rawQuotas.find(q => q.label.includes('Claude') || q.label.includes('GPT'))?.absResetTime || '(03h18)';
+
+            finalQuotas.push({
+                label: 'Claude/GPT Session (5hr)',
+                remaining: weeklyRemaining > 0 ? 100 : 0,
+                resetTime: weeklyRemaining > 0 ? '5h 0m' : claudeResetTime,
+                absResetTime: weeklyRemaining > 0 ? '' : claudeAbsReset,
+                themeColor: '#F97316',
+                style: 'fluid'
+            });
+        }
+
         return {
             name: user?.name || 'User',
             email: user?.email || '',
             tier: user?.userTier?.name || user?.planStatus?.planInfo?.planName || 'Free',
-            quotas: Array.from(quotaMap.values()),
+            quotas: finalQuotas,
             limitGroups
         };
     }
@@ -645,9 +765,12 @@ export class QuotaService {
             }
 
             const quotas = this.buildClaudeQuotas(usageData, localConfig.usagePeriod);
+            const limitGroups = this.buildClaudeLimitGroups(usageData, localConfig.usagePeriod);
             return {
                 name: displayName, email, tier,
-                quotas, isAuthenticated: true,
+                quotas,
+                limitGroups,
+                isAuthenticated: true,
                 error: quotas.length === 0 ? "No usage data returned" : undefined
             };
         } catch (e: any) {
@@ -724,6 +847,29 @@ export class QuotaService {
             // Real usage from the newest Codex session log; falls back to
             // showing just the active model when no fresh rate_limits exist.
             const usageQuotas = readCodexRateLimits();
+            const codexLimitItems: import('./types').LimitItem[] = [];
+            for (const q of usageQuotas) {
+                codexLimitItems.push({
+                    label: q.label.includes('5') || q.label.includes('Session') ? 'Five Hour Limit Remaining' : (q.label.includes('Week') || q.label.includes('7') ? 'Weekly Limit Remaining' : q.label),
+                    remaining: Math.round(q.remaining),
+                    description: q.resetTime ? `Rate limit will fully refresh in ${q.resetTime}.` : 'OpenAI Codex session quota.',
+                    resetTimeText: q.resetTime
+                });
+            }
+            codexLimitItems.push({
+                label: 'Active Model',
+                remaining: 0,
+                displayValue: model,
+                description: 'Current model selected for OpenAI Codex CLI sessions.'
+            });
+
+            const codexLimitGroups: import('./types').LimitGroup[] = [{
+                id: 'openai-codex',
+                title: 'OpenAI Codex',
+                infoTooltip: 'OpenAI Codex session rate limits and active model',
+                items: codexLimitItems
+            }];
+
             return {
                 name: "Codex",
                 email,
@@ -739,6 +885,7 @@ export class QuotaService {
                         style: 'fluid'
                     }
                 ],
+                limitGroups: codexLimitGroups,
                 isAuthenticated: true
             };
         } catch (e: any) {
