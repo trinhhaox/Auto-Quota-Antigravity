@@ -1,6 +1,17 @@
 # Changelog - AG Manager
 
-## [1.9.4] - 2026-08-22
+## [2.1.0] - 2026-08-26
+
+### Status Bar 5-Hour Window & Unified Card UI
+- **Ưu tiên hiển thị Quota 5 giờ trên Status Bar (`sqm.statusBar.usagePeriod`):** Cung cấp tùy chọn cấu hình linh hoạt (`5-hour`, `7-day`, `worst`), mặc định hiển thị chính xác % quota của phiên làm việc 5h và thời gian đếm ngược trực quan.
+- **Đồng bộ hóa giao diện Claude Code & OpenAI Codex:** Chuyển toàn bộ hiển thị của Claude Code và Codex sang định dạng `.limit-card` chuẩn Antigravity với biểu đồ **Donut Chart SVG**, đường kẻ phân tách tinh tế và badge `Active Model` nổi bật.
+- **Cải thiện độ ổn định và cấu trúc dữ liệu:** Cung cấp đầy đủ `limitGroups` từ backend service sang webview.
+
+## [2.0.0] - 2026-08-25
+
+### Rebrand to Aquota & Native IDE Limit Groups
+- Tinh gọn giao diện với phong cách Dark Glassmorphism tối giản và hiện đại.
+- Gom nhóm theo định dạng Quota Groups của IDE.
 
 ### Fix Status Bar Overflow & Layout Collision
 - **Khắc phục triệt để lỗi tràn & chồng đè thanh trạng thái:** Gom nhóm đại diện siêu gọn trên Status Bar (`Gemini`, `Claude`, `CLI`, `Codex`) với độ dài vừa vặn (~45 ký tự), không còn bị các widget góc phải IDE đè lên hay bị cắt cụt chữ.
