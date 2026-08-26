@@ -1,5 +1,11 @@
 # Changelog - AG Manager
 
+## [2.1.1] - 2026-08-26
+
+### Gemini 5-Hour Session Quota Priority & Real-time Sync
+- **Cố định hiển thị Quota 5hr trên Status Bar:** Tối ưu hóa việc lọc và hiển thị mức giới hạn phiên 5 giờ của Gemini (`Session 5hr`), hiển thị thời gian đếm ngược chính xác thay vì lấy 7-day weekly.
+- **Tối ưu đồng bộ runtime:** Tự động đồng bộ và áp dụng ngay lập tức cho các môi trường Antigravity IDE.
+
 ## [2.1.0] - 2026-08-26
 
 ### Status Bar 5-Hour Window & Unified Card UI
