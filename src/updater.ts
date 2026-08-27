@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as https from 'https';
 
 const REPO_OWNER = 'trinhhaox';
-const REPO_NAME = 'Auto-Quota-Antigravity';
+const REPO_NAME = 'aquota';
 const API_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
 
 export async function checkForUpdates(context: vscode.ExtensionContext) {
@@ -12,7 +12,7 @@ export async function checkForUpdates(context: vscode.ExtensionContext) {
 
         const options = {
             headers: {
-                'User-Agent': 'VSCode-Auto-Quota-Antigravity-Extension'
+                'User-Agent': 'VSCode-Aquota-Extension'
             }
         };
 
@@ -64,7 +64,7 @@ function isNewerVersion(current: string, latest: string): boolean {
 
 async function showUpdateNotification(newVersion: string, url: string) {
     const action = 'Tải Về Ngay';
-    const message = `Một phiên bản mới của Auto Quota Antigravity (v${newVersion}) đã sẵn sàng!`;
+    const message = `Một phiên bản mới của Aquota (v${newVersion}) đã sẵn sàng!`;
     const result = await vscode.window.showInformationMessage(message, action);
 
     if (result === action) {

@@ -1,5 +1,5 @@
 {
-  "name": "auto-quota-antigravity",
+  "name": "aquota",
   "displayName": "Aquota",
   "description": "Real-time AI Quota Monitor for Antigravity IDE, Claude Code, and OpenAI Codex.",
   "version": "2.1.2",
@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/trinhhaox/Auto-Quota-Antigravity.git"
+    "url": "https://github.com/trinhhaox/aquota.git"
   },
   "icon": "logo/logo.png",
   "engines": {
