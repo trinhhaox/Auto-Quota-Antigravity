@@ -1,5 +1,12 @@
 # Changelog - AG Manager
 
+## [2.1.2] - 2026-08-28
+
+### Live Quota Accuracy & Tooltip Fix
+- **Hiển thị hạn mức thực tế 100%:** Loại bỏ công thức suy diễn giả lập 2 tầng trong Antigravity IDE (vốn tự động ép Session 5h lên 100% và gán cứng thời gian reset). Giờ đây Antigravity báo cáo trực tiếp số liệu thật từ server cho từng nhóm model.
+- **Chuẩn hóa hiển thị Claude Code CLI:** Giữ nguyên hỗ trợ phân tách Session 5h và Weekly 7d thực tế từ Anthropic OAuth API.
+- **Đồng bộ hóa Status Bar & Tooltip:** Hiển thị trực quan, chính xác mức % thực tế và thời gian hồi phục đếm ngược.
+
 ## [2.1.1] - 2026-08-26
 
 ### Gemini 5-Hour Session Quota Priority & Real-time Sync
